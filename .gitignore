@@ -1,0 +1,11 @@
+# Locally built bridge executable
+进程间计算/mpi_fpga_bridge
+
+# Local agent and repository metadata
+进程间计算/.agents/
+进程间计算/.codex/
+进程间计算/.git/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
