@@ -67,7 +67,7 @@ python3 -m py_compile \
 ### 3.2 FPGA 工程
 
 在主机上clone corundum和ethernet-switch这两个在github上的开源项目，需要将这两个项目文件clone到同一路径下。
-将axis_ip_route_classifier.v，axis_udp_accumulator.v，axis_udp_pair_aggregator.v这三个文件复制到corundum的corundum/fpga/mqnic/ZCU102/fpga/rtl中。
+将rtl这个文件替换掉corundum的corundum/fpga/mqnic/ZCU102/fpga/rtl中。
 将Makefile替换掉corundum/fpga/mqnic/ZCU102/fpga/fpga路径中的Makefile文件。
 随后按照corundum的ZCU102文件中的README.md继续操作。
 
