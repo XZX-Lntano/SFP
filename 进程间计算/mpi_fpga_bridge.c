@@ -39,7 +39,7 @@
 #define FPGA_IP_PROTO_UDP 17u
 #define BRIDGE_MAX_ENTRIES 64u
 #define BRIDGE_MAX_WORKERS 4u
-#define FPGA_PAYLOAD_LEN (2u + BRIDGE_MAX_ENTRIES * 10u)
+#define FPGA_PAYLOAD_LEN (2u + BRIDGE_MAX_ENTRIES * sizeof(uint64_t))
 #define FPGA_DEFAULT_DPORT 0x2345u
 #define DEFAULT_FPGA_TIMEOUT_MS 5000
 
@@ -48,10 +48,7 @@ static const uint8_t fpga_request_src_mac[6] = {0x02, 0x00, 0x00,
                                                  0x00, 0x00, 0x01};
 
 #pragma pack(push, 1)
-typedef struct {
-  uint16_t index;
-  uint64_t value;
-} BridgeEntry;
+typedef uint64_t BridgeEntry;
 
 typedef struct {
   uint32_t magic;
@@ -174,14 +171,11 @@ static void bridge_host_to_network(BridgeMessage *m) {
   m->reserved = htons(m->reserved);
 
   for (unsigned w = 0; w < 4; w++)
-    for (unsigned i = 0; i < 64; i++) {
-      m->worker_entries[w][i].index = htons(m->worker_entries[w][i].index);
-      m->worker_entries[w][i].value = hton64(m->worker_entries[w][i].value);
-    }
+    for (unsigned i = 0; i < 64; i++)
+      m->worker_entries[w][i] = hton64(m->worker_entries[w][i]);
 
   for (unsigned i = 0; i < 64; i++) {
-    m->result_entries[i].index = htons(m->result_entries[i].index);
-    m->result_entries[i].value = hton64(m->result_entries[i].value);
+    m->result_entries[i] = hton64(m->result_entries[i]);
   }
 }
 
@@ -198,13 +192,11 @@ static void bridge_network_to_host(BridgeMessage *m) {
 
   for (unsigned w = 0; w < 4; w++)
     for (unsigned i = 0; i < 64; i++) {
-      m->worker_entries[w][i].index = ntohs(m->worker_entries[w][i].index);
-      m->worker_entries[w][i].value = ntoh64(m->worker_entries[w][i].value);
+      m->worker_entries[w][i] = ntoh64(m->worker_entries[w][i]);
     }
 
   for (unsigned i = 0; i < 64; i++) {
-    m->result_entries[i].index = ntohs(m->result_entries[i].index);
-    m->result_entries[i].value = ntoh64(m->result_entries[i].value);
+    m->result_entries[i] = ntoh64(m->result_entries[i]);
   }
 }
 
@@ -227,22 +219,6 @@ static int validate_message(const BridgeMessage *m) {
 
   if (m->msg_type == APP_MSG_STOP)
     return 0;
-
-  uint8_t seen[4][65] = {{0}};
-
-  for (unsigned w = 0; w < m->worker_count; w++)
-    for (unsigned i = 0; i < m->entry_count; i++) {
-
-      uint16_t idx = m->worker_entries[w][i].index;
-
-      if (!idx || idx > 64)
-        return BRIDGE_STATUS_BAD_INDEX_RANGE;
-      if (seen[w][idx])
-        return BRIDGE_STATUS_DUPLICATE_INDEX;
-      seen[w][idx] = 1;
-      if (w && idx != m->worker_entries[0][i].index)
-        return BRIDGE_STATUS_BAD_WORKER_LAYOUT;
-    }
 
   return 0;
 }
@@ -337,12 +313,8 @@ static void load_entries(const BridgeEntry *in, uint16_t n, EntryArray *out) {
   memset(out, 0, sizeof(*out));
   for (unsigned slot = 0; slot < 64; slot++) {
     out->index[slot] = slot + 1;
-
-    for (unsigned i = 0; i < n; i++)
-      if (in[i].index == slot + 1) {
-        out->value[slot] = in[i].value;
-        break;
-      }
+    if (slot < n)
+      out->value[slot] = in[slot];
   }
 }
 
@@ -371,11 +343,9 @@ static int send_frame(const RawPort *p, const BridgeConfig *c, unsigned w,
   payload[1] = round;
 
   for (unsigned i = 0; i < 64; i++) {
-    uint16_t idx = htons(e->index[i]);
     uint64_t val = hton64(e->value[i]);
-    size_t off = 2 + i * 10;
-    memcpy(payload + off, &idx, 2);
-    memcpy(payload + off + 2, &val, 8);
+    size_t off = 2 + i * sizeof(uint64_t);
+    memcpy(payload + off, &val, sizeof(val));
   }
 
   size_t len = 14 + 20 + 8 + FPGA_PAYLOAD_LEN;
@@ -398,7 +368,7 @@ static int parse_result(RawPort *port, const uint8_t *b, ssize_t n,
     port->rx_outgoing++;
     return 0;
   }
-  if (n < 684) {
+  if (n < 14 + 20 + 8 + (ssize_t)FPGA_PAYLOAD_LEN) {
     port->rx_rejected++;
     return 0;
   }
@@ -422,12 +392,10 @@ static int parse_result(RawPort *port, const uint8_t *b, ssize_t n,
   const uint8_t *p = b + 14 + ihl + 8;
   *round = ((uint16_t)p[0] << 8) | p[1];
   for (unsigned i = 0; i < 64; i++) {
-    uint16_t idx;
     uint64_t val;
-    size_t off = 2 + i * 10;
-    memcpy(&idx, p + off, 2);
-    memcpy(&val, p + off + 2, 8);
-    out->index[i] = ntohs(idx);
+    size_t off = 2 + i * sizeof(uint64_t);
+    memcpy(&val, p + off, sizeof(val));
+    out->index[i] = i + 1;
     out->value[i] = ntoh64(val);
   }
   return 1;
@@ -501,8 +469,7 @@ static void print_entries(const BridgeEntry *entries, uint16_t count) {
   for (uint16_t i = 0; i < count; i++) {
     if (i)
       printf(", ");
-    printf("%u:%llu", entries[i].index,
-           (unsigned long long)entries[i].value);
+    printf("%llu", (unsigned long long)entries[i]);
   }
   printf("]");
 }
@@ -718,15 +685,8 @@ int main(int argc, char **argv) {
       res.worker_count = req.worker_count;
       memcpy(res.worker_entries, req.worker_entries,
              sizeof(res.worker_entries));
-      for (unsigned i = 0; i < req.entry_count; i++) {
-        uint16_t idx = req.worker_entries[0][i].index;
-        res.result_entries[i].index = idx;
-        for (unsigned j = 0; j < 64; j++)
-          if (all[0].index[j] == idx) {
-            res.result_entries[i].value = all[0].value[j];
-            break;
-          }
-      }
+      for (unsigned i = 0; i < req.entry_count; i++)
+        res.result_entries[i] = all[0].value[i];
       print_request_summary(&req, &res);
       bridge_host_to_network(&res);
       sendto(app, &res, sizeof(res), 0, (struct sockaddr *)&peer, peer_len);

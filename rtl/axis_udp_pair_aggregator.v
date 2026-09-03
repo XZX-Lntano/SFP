@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: BSD-2-Clause-Views
 /*
- * Collect 2 to 4 worker packets, sum ENTRY_COUNT indexed values by round_id,
+ * Collect 2 to 4 worker packets, sum ENTRY_COUNT sequential values by round_id,
  * then broadcast one modified result packet back to every worker port.
  *
  * Fixed packet layout (no VLAN, IPv4 header without options).  Each entry
- * occupies 10 bytes starting at byte 44: 2-byte index followed by 8-byte value.
+ * occupies 8 bytes starting at byte 44; entries are in slot order (0..63).
  *   byte 36-37       : UDP destination port
  *   byte 42-43       : 16-bit round_id
  *   byte 44+10*n     : entry n index[15:8]
@@ -76,8 +76,8 @@ module axis_udp_pair_aggregator #
 
 localparam IPV4_CHECKSUM_OFFSET = 40;
 localparam ENTRY_BASE_OFFSET = 44;
-localparam ENTRY_STRIDE_BYTES = 10;
-localparam ENTRY_VALUE_OFFSET = 2;
+localparam ENTRY_STRIDE_BYTES = 8;
+localparam ENTRY_VALUE_OFFSET = 0;
 localparam ENTRY_VALUE_BYTES = 8;
 localparam ENTRY_INDEX_WIDTH = ENTRY_COUNT > 1 ? $clog2(ENTRY_COUNT) : 1;
 
@@ -252,6 +252,10 @@ reg [USER_WIDTH-1:0] m_axis_tuser_reg = {USER_WIDTH{1'b0}};
 wire output_ready = !m_axis_tvalid_reg || m_axis_tready;
 reg [DATA_WIDTH-1:0] output_tdata_mux;
 reg [KEEP_WIDTH-1:0] output_tkeep_mux;
+integer output_lane;
+integer output_byte_index;
+integer output_slot;
+integer output_value_byte;
 
 assign frame_fifo_out_tready = frame_action_valid_reg && (current_emit_reg ? output_ready : 1'b1);
 
@@ -267,60 +271,18 @@ always @* begin
     output_tkeep_mux = frame_fifo_out_tkeep;
 
     if (current_emit_reg) begin
+        for (output_lane = 0; output_lane < KEEP_WIDTH; output_lane = output_lane + 1) begin
+            output_byte_index = output_beat_index_reg * KEEP_WIDTH + output_lane;
+            if (output_byte_index >= ENTRY_BASE_OFFSET &&
+                    output_byte_index < ENTRY_BASE_OFFSET + ENTRY_COUNT * ENTRY_STRIDE_BYTES) begin
+                output_slot = (output_byte_index - ENTRY_BASE_OFFSET) / ENTRY_STRIDE_BYTES;
+                output_value_byte = (output_byte_index - ENTRY_BASE_OFFSET) % ENTRY_STRIDE_BYTES;
+                output_tdata_mux[output_lane*8 +: 8] = result_byte(current_result_reg[output_slot], output_value_byte[3:0]);
+            end
+        end
         if (output_beat_index_reg == 8'd5) begin
             output_tdata_mux[0*8 +: 8] = 8'd0;
             output_tdata_mux[1*8 +: 8] = 8'd0;
-            output_tdata_mux[6*8 +: 8] = result_byte(output_value_reg, 4'd0);
-            output_tdata_mux[7*8 +: 8] = result_byte(output_value_reg, 4'd1);
-        end else if (output_entry_active_reg && output_entry_index_reg < ENTRY_COUNT) begin
-            case (output_entry_byte_reg)
-                4'd0: begin
-                    output_tdata_mux[2*8 +: 8] = result_byte(output_value_reg, 4'd0);
-                    output_tdata_mux[3*8 +: 8] = result_byte(output_value_reg, 4'd1);
-                    output_tdata_mux[4*8 +: 8] = result_byte(output_value_reg, 4'd2);
-                    output_tdata_mux[5*8 +: 8] = result_byte(output_value_reg, 4'd3);
-                    output_tdata_mux[6*8 +: 8] = result_byte(output_value_reg, 4'd4);
-                    output_tdata_mux[7*8 +: 8] = result_byte(output_value_reg, 4'd5);
-                end
-                4'd2: begin
-                    output_tdata_mux[0*8 +: 8] = result_byte(output_value_reg, 4'd0);
-                    output_tdata_mux[1*8 +: 8] = result_byte(output_value_reg, 4'd1);
-                    output_tdata_mux[2*8 +: 8] = result_byte(output_value_reg, 4'd2);
-                    output_tdata_mux[3*8 +: 8] = result_byte(output_value_reg, 4'd3);
-                    output_tdata_mux[4*8 +: 8] = result_byte(output_value_reg, 4'd4);
-                    output_tdata_mux[5*8 +: 8] = result_byte(output_value_reg, 4'd5);
-                    output_tdata_mux[6*8 +: 8] = result_byte(output_value_reg, 4'd6);
-                    output_tdata_mux[7*8 +: 8] = result_byte(output_value_reg, 4'd7);
-                end
-                4'd4: begin
-                    output_tdata_mux[0*8 +: 8] = result_byte(output_value_reg, 4'd2);
-                    output_tdata_mux[1*8 +: 8] = result_byte(output_value_reg, 4'd3);
-                    output_tdata_mux[2*8 +: 8] = result_byte(output_value_reg, 4'd4);
-                    output_tdata_mux[3*8 +: 8] = result_byte(output_value_reg, 4'd5);
-                    output_tdata_mux[4*8 +: 8] = result_byte(output_value_reg, 4'd6);
-                    output_tdata_mux[5*8 +: 8] = result_byte(output_value_reg, 4'd7);
-                end
-                4'd6: begin
-                    output_tdata_mux[0*8 +: 8] = result_byte(output_value_reg, 4'd4);
-                    output_tdata_mux[1*8 +: 8] = result_byte(output_value_reg, 4'd5);
-                    output_tdata_mux[2*8 +: 8] = result_byte(output_value_reg, 4'd6);
-                    output_tdata_mux[3*8 +: 8] = result_byte(output_value_reg, 4'd7);
-                    if (output_entry_index_reg + 1 < ENTRY_COUNT) begin
-                        output_tdata_mux[6*8 +: 8] = result_byte(output_next_value_reg, 4'd0);
-                        output_tdata_mux[7*8 +: 8] = result_byte(output_next_value_reg, 4'd1);
-                    end
-                end
-                4'd8: begin
-                    output_tdata_mux[0*8 +: 8] = result_byte(output_value_reg, 4'd6);
-                    output_tdata_mux[1*8 +: 8] = result_byte(output_value_reg, 4'd7);
-                    if (output_entry_index_reg + 1 < ENTRY_COUNT) begin
-                        output_tdata_mux[4*8 +: 8] = result_byte(output_next_value_reg, 4'd0);
-                        output_tdata_mux[5*8 +: 8] = result_byte(output_next_value_reg, 4'd1);
-                        output_tdata_mux[6*8 +: 8] = result_byte(output_next_value_reg, 4'd2);
-                        output_tdata_mux[7*8 +: 8] = result_byte(output_next_value_reg, 4'd3);
-                    end
-                end
-            endcase
         end
     end
 end
@@ -598,93 +560,32 @@ always @(posedge clk) begin
                     input_entry_active_tmp = 1'b1;
                     input_entry_index_tmp = 0;
                     input_entry_byte_tmp = 4'd4;
-                    input_value_shift_tmp[63:56] = selected_tdata[6*8 +: 8];
-                    input_value_shift_tmp[55:48] = selected_tdata[7*8 +: 8];
+                    input_value_shift_tmp[63:56] = selected_tdata[4*8 +: 8];
+                    input_value_shift_tmp[55:48] = selected_tdata[5*8 +: 8];
+                    input_value_shift_tmp[47:40] = selected_tdata[6*8 +: 8];
+                    input_value_shift_tmp[39:32] = selected_tdata[7*8 +: 8];
                 end
                 default: begin
                     if (input_entry_active_reg && input_entry_index_reg < ENTRY_COUNT) begin
-                        case (input_entry_byte_reg)
-                            4'd0: begin
-                                input_value_shift_tmp[63:56] = selected_tdata[2*8 +: 8];
-                                input_value_shift_tmp[55:48] = selected_tdata[3*8 +: 8];
-                                input_value_shift_tmp[47:40] = selected_tdata[4*8 +: 8];
-                                input_value_shift_tmp[39:32] = selected_tdata[5*8 +: 8];
-                                input_value_shift_tmp[31:24] = selected_tdata[6*8 +: 8];
-                                input_value_shift_tmp[23:16] = selected_tdata[7*8 +: 8];
-                                input_entry_byte_tmp = 4'd8;
+                        if (input_entry_byte_reg == 4) begin
+                            input_value_shift_tmp[31:24] = selected_tdata[0*8 +: 8];
+                            input_value_shift_tmp[23:16] = selected_tdata[1*8 +: 8];
+                            input_value_shift_tmp[15:8] = selected_tdata[2*8 +: 8];
+                            input_value_shift_tmp[7:0] = selected_tdata[3*8 +: 8];
+                            packet_value_wr_en_tmp = 1'b1;
+                            packet_value_wr_index_tmp = input_entry_index_reg[ENTRY_INDEX_WIDTH-1:0];
+                            packet_value_wr_data_tmp = input_value_shift_tmp;
+                            input_entry_index_tmp = input_entry_index_reg + 1'b1;
+                            input_entry_byte_tmp = 4'd4;
+                            if (input_entry_index_reg + 1 < ENTRY_COUNT) begin
+                                input_value_shift_tmp[63:56] = selected_tdata[4*8 +: 8];
+                                input_value_shift_tmp[55:48] = selected_tdata[5*8 +: 8];
+                                input_value_shift_tmp[47:40] = selected_tdata[6*8 +: 8];
+                                input_value_shift_tmp[39:32] = selected_tdata[7*8 +: 8];
+                            end else begin
+                                input_entry_active_tmp = 1'b0;
                             end
-                            4'd2: begin
-                                input_value_shift_tmp[63:56] = selected_tdata[0*8 +: 8];
-                                input_value_shift_tmp[55:48] = selected_tdata[1*8 +: 8];
-                                input_value_shift_tmp[47:40] = selected_tdata[2*8 +: 8];
-                                input_value_shift_tmp[39:32] = selected_tdata[3*8 +: 8];
-                                input_value_shift_tmp[31:24] = selected_tdata[4*8 +: 8];
-                                input_value_shift_tmp[23:16] = selected_tdata[5*8 +: 8];
-                                input_value_shift_tmp[15:8] = selected_tdata[6*8 +: 8];
-                                input_value_shift_tmp[7:0] = selected_tdata[7*8 +: 8];
-                                packet_value_wr_en_tmp = 1'b1;
-                                packet_value_wr_index_tmp = input_entry_index_reg[ENTRY_INDEX_WIDTH-1:0];
-                                packet_value_wr_data_tmp = input_value_shift_tmp;
-                                input_entry_index_tmp = input_entry_index_reg + 1'b1;
-                                input_entry_byte_tmp = 4'd0;
-                                if (input_entry_index_reg + 1 >= ENTRY_COUNT) begin
-                                    input_entry_active_tmp = 1'b0;
-                                end
-                            end
-                            4'd4: begin
-                                input_value_shift_tmp[47:40] = selected_tdata[0*8 +: 8];
-                                input_value_shift_tmp[39:32] = selected_tdata[1*8 +: 8];
-                                input_value_shift_tmp[31:24] = selected_tdata[2*8 +: 8];
-                                input_value_shift_tmp[23:16] = selected_tdata[3*8 +: 8];
-                                input_value_shift_tmp[15:8] = selected_tdata[4*8 +: 8];
-                                input_value_shift_tmp[7:0] = selected_tdata[5*8 +: 8];
-                                packet_value_wr_en_tmp = 1'b1;
-                                packet_value_wr_index_tmp = input_entry_index_reg[ENTRY_INDEX_WIDTH-1:0];
-                                packet_value_wr_data_tmp = input_value_shift_tmp;
-                                input_entry_index_tmp = input_entry_index_reg + 1'b1;
-                                input_entry_byte_tmp = 4'd2;
-                                if (input_entry_index_reg + 1 >= ENTRY_COUNT) begin
-                                    input_entry_active_tmp = 1'b0;
-                                end
-                            end
-                            4'd6: begin
-                                input_value_shift_tmp[31:24] = selected_tdata[0*8 +: 8];
-                                input_value_shift_tmp[23:16] = selected_tdata[1*8 +: 8];
-                                input_value_shift_tmp[15:8] = selected_tdata[2*8 +: 8];
-                                input_value_shift_tmp[7:0] = selected_tdata[3*8 +: 8];
-                                packet_value_wr_en_tmp = 1'b1;
-                                packet_value_wr_index_tmp = input_entry_index_reg[ENTRY_INDEX_WIDTH-1:0];
-                                packet_value_wr_data_tmp = input_value_shift_tmp;
-                                input_entry_index_tmp = input_entry_index_reg + 1'b1;
-                                input_entry_byte_tmp = 4'd4;
-                                if (input_entry_index_reg + 1 < ENTRY_COUNT) begin
-                                    input_value_shift_tmp[63:56] = selected_tdata[6*8 +: 8];
-                                    input_value_shift_tmp[55:48] = selected_tdata[7*8 +: 8];
-                                end else begin
-                                    input_entry_active_tmp = 1'b0;
-                                end
-                            end
-                            4'd8: begin
-                                input_value_shift_tmp[15:8] = selected_tdata[0*8 +: 8];
-                                input_value_shift_tmp[7:0] = selected_tdata[1*8 +: 8];
-                                packet_value_wr_en_tmp = 1'b1;
-                                packet_value_wr_index_tmp = input_entry_index_reg[ENTRY_INDEX_WIDTH-1:0];
-                                packet_value_wr_data_tmp = input_value_shift_tmp;
-                                input_entry_index_tmp = input_entry_index_reg + 1'b1;
-                                input_entry_byte_tmp = 4'd6;
-                                if (input_entry_index_reg + 1 < ENTRY_COUNT) begin
-                                    input_value_shift_tmp[63:56] = selected_tdata[4*8 +: 8];
-                                    input_value_shift_tmp[55:48] = selected_tdata[5*8 +: 8];
-                                    input_value_shift_tmp[47:40] = selected_tdata[6*8 +: 8];
-                                    input_value_shift_tmp[39:32] = selected_tdata[7*8 +: 8];
-                                end else begin
-                                    input_entry_active_tmp = 1'b0;
-                                end
-                            end
-                            default: begin
-                                input_entry_byte_tmp = 4'd0;
-                            end
-                        endcase
+                        end
                     end
                 end
             endcase

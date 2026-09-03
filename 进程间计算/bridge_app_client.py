@@ -12,7 +12,7 @@ APP_MSG_REQUEST = 1
 APP_MSG_RESPONSE = 2
 APP_MSG_STOP = 3
 APP_MSG_ERROR = 4
-WIRE_FMT = "!IHHIHHHH" + ("HQ" * MAX_ENTRIES) * (MAX_WORKERS + 1)
+WIRE_FMT = "!IHHIHHHH" + ("Q" * MAX_ENTRIES) * (MAX_WORKERS + 1)
 STATUS = {
     0: "OK",
     1: "BAD_MAGIC",
@@ -31,36 +31,24 @@ STATUS = {
 }
 
 
-def parse_entry(text):
+def parse_value(text):
     try:
-        index_text, value_text = text.split(":", 1)
-        index, value = int(index_text, 0), int(value_text, 0)
+        value = int(text, 0)
     except ValueError as exc:
-        raise ValueError(f"无效 entry {text!r}，格式应为 INDEX:VALUE") from exc
-    if not 1 <= index <= MAX_ENTRIES:
-        raise ValueError(f"index={index} 超出 1..{MAX_ENTRIES}")
+        raise ValueError(f"无效 value {text!r}，格式应为整数") from exc
     if not 0 <= value <= 0xffffffffffffffff:
         raise ValueError(f"value={value} 超出 uint64 范围")
-    return index, value
+    return value
 
 
-def normalize(entries):
-    result = sorted(entries)
-    indexes = [index for index, _ in result]
-    if len(set(indexes)) != len(indexes):
-        raise ValueError("同一 worker 的 index 不能重复")
-    return result
+def normalize(values):
+    if len(values) > MAX_ENTRIES:
+        raise ValueError(f"每个 worker 最多 {MAX_ENTRIES} 个 value")
+    return list(values)
 
 
-def pad(entries):
-    entries = list(entries)
-    present = {index for index, _ in entries}
-    entries.extend(
-        (index, 0)
-        for index in range(1, MAX_ENTRIES + 1)
-        if index not in present
-    )
-    return entries[:MAX_ENTRIES]
+def pad(values):
+    return list(values) + [0] * (MAX_ENTRIES - len(values))
 
 
 def build_message(request_id, workers, msg_type=APP_MSG_REQUEST):
@@ -68,31 +56,23 @@ def build_message(request_id, workers, msg_type=APP_MSG_REQUEST):
     if not 2 <= worker_count <= MAX_WORKERS:
         raise ValueError("必须提供 2、3 或 4 路 worker")
     normalized = [normalize(worker) for worker in workers]
-    expected_indexes = [index for index, _ in normalized[0]]
-    workers_share_indexes = all(
-        [index for index, _ in worker] == expected_indexes
-        for worker in normalized[1:]
-    )
-    if not workers_share_indexes:
-        raise ValueError("所有 worker 必须提供相同的 index 集合")
+    entry_count = len(normalized[0])
+    if any(len(worker) != entry_count for worker in normalized):
+        raise ValueError("所有 worker 必须提供相同数量的 value")
     wire_workers = [pad(worker) for worker in normalized]
     while len(wire_workers) < MAX_WORKERS:
-        wire_workers.append(
-            [(index, 0) for index in range(1, MAX_ENTRIES + 1)]
-        )
+        wire_workers.append([0] * MAX_ENTRIES)
     fields = []
     for worker in wire_workers:
-        for index, value in worker:
-            fields.extend((index, value))
-    for index in range(1, MAX_ENTRIES + 1):
-        fields.extend((index, 0))
+        fields.extend(worker)
+    fields.extend([0] * MAX_ENTRIES)
     return struct.pack(
         WIRE_FMT,
         BRIDGE_MAGIC,
         BRIDGE_VERSION,
         msg_type,
         request_id,
-        len(expected_indexes),
+        entry_count,
         worker_count,
         0,
         0,
@@ -120,14 +100,12 @@ def decode_message(raw):
     for _ in range(MAX_WORKERS):
         workers.append(
             [
-                (values[cursor + 2 * i], values[cursor + 2 * i + 1])
-                for i in range(MAX_ENTRIES)
+                values[cursor + i] for i in range(MAX_ENTRIES)
             ]
         )
-        cursor += MAX_ENTRIES * 2
+        cursor += MAX_ENTRIES
     result = [
-        (values[cursor + 2 * i], values[cursor + 2 * i + 1])
-        for i in range(MAX_ENTRIES)
+        values[cursor + i] for i in range(MAX_ENTRIES)
     ]
     return {
         "magic": magic,
@@ -142,11 +120,8 @@ def decode_message(raw):
     }
 
 
-def show(entries, indexes):
-    lookup = dict(entries)
-    return "[" + ", ".join(
-        f"{index}:{lookup.get(index, 0)}" for index in indexes
-    ) + "]"
+def show(values, count):
+    return "[" + ", ".join(str(v) for v in values[:count]) + "]"
 
 
 def main():
@@ -160,19 +135,17 @@ def main():
     )
 
     for worker in range(MAX_WORKERS):
-        parser.add_argument(
-            f"--worker{worker}-entries", nargs="+", metavar="INDEX:VALUE"
-        )
+        parser.add_argument(f"--worker{worker}-values", nargs="+", metavar="VALUE")
     parser.add_argument("--timeout", type=float, default=8.0)
     parser.add_argument("--stop", action="store_true")
     args = parser.parse_args()
     supplied = [
-        getattr(args, f"worker{worker}_entries")
+        getattr(args, f"worker{worker}_values")
         for worker in range(MAX_WORKERS)
     ]
 
     if args.stop:
-        supplied = [["1:0"], ["1:0"]]
+        supplied = [["0"], ["0"]]
     else:
         missing_required_worker = not supplied[0] or not supplied[1]
         non_contiguous_workers = any(
@@ -187,7 +160,7 @@ def main():
 
     try:
         workers = [
-            [parse_entry(item) for item in entries]
+            [parse_value(item) for item in entries]
             for entries in supplied
             if entries
         ]
@@ -212,7 +185,6 @@ def main():
     except ValueError as exc:
         print(exc, file=sys.stderr)
         return 1
-    indexes = [index for index, _ in normalize(workers[0])]
     print(f"peer        : {peer[0]}:{peer[1]}")
     print(f"request_id  : {message['request_id']}")
     print(f"worker_count: {message['worker_count']}")
@@ -223,8 +195,8 @@ def main():
     )
     
     for worker, entries in enumerate(workers):
-        print(f"worker{worker:<5}: {show(entries, indexes)}")
-    print(f"result      : {show(message['result_entries'], indexes)}")
+        print(f"worker{worker:<5}: {show(entries, message['entry_count'])}")
+    print(f"result      : {show(message['result_entries'], message['entry_count'])}")
     response_is_valid = (
         message["magic"] == BRIDGE_MAGIC
         and message["version"] == BRIDGE_VERSION

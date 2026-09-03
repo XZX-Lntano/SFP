@@ -5,9 +5,9 @@
 本项目在 ZCU102 的 PL 侧部署基于 Corundum/mqnic 的四端口 FPGA 网卡，
 用于模拟分布式应用中的 AllReduce 求和流程。
 
-应用层将 2、3 或 4 路 worker 的索引数值发送给主机上的 MPI bridge。bridge
+应用层将 2、3 或 4 路 worker 的连续数值发送给主机上的 MPI bridge。bridge
 将每路数据封装成 Ethernet + IPv4 + UDP + 自定义 payload 帧并经四个 SFP
-端口发送到 FPGA。FPGA 对相同轮次的 64 个固定索引槽位逐项求和，将结果帧
+端口发送到 FPGA。FPGA 对相同轮次的 64 个连续槽位逐项求和，将结果帧
 广播回四个端口；四个 MPI rank 分别接收并比对结果，rank0 再把最终结果回传
 给应用层。
 
@@ -22,10 +22,9 @@
 
 ## 2. 主要功能
 
-- FPGA 侧支持 64 个索引槽位，索引范围为 `1..64`，每项为 `uint64` 数值。
+- FPGA 侧支持 64 个连续槽位，每项为 `uint64` 数值；物理 payload 为 `round_id + 64*8` 字节，不再携带 index。
 - 支持 2、3、4 路 worker 聚合；worker 数由 IPv4 TTL 字段传递给 FPGA。
-- 支持稀疏输入：未提供的索引自动以 `0` 补齐参与求和。
-- 要求所有 worker 提供相同的索引集合，输入顺序可以不同。
+- 未提供的尾部槽位自动以 `0` 补齐参与求和；所有 worker 必须提供相同数量的 value。
 - FPGA 结果通过四个 SFP 发口广播；4 个 MPI rank 均接收同一结果并进行一致性
   校验。
 - `bridge_app_client.py` 提供应用层 UDP 客户端。
@@ -125,10 +124,10 @@ python3 bridge_app_client.py \
   --host 127.0.0.1 \
   --port 10000 \
   --request-id 4660 \
-  --worker0-entries 1:10 2:20 3:30 4:40 5:50 \
-  --worker1-entries 1:1 2:2 3:3 4:4 5:6 \
-  --worker2-entries 1:1 2:2 3:3 4:4 5:6 \
-  --worker3-entries 1:1 2:2 3:3 4:4 5:7
+  --worker0-values 10 20 30 40 50 \
+  --worker1-values 1 2 3 4 5 \
+  --worker2-values 1 1 1 1 1 \
+  --worker3-values 2 2 2 2 2
 ```
 
 至少提供 `worker0` 和 `worker1`；连续提供 `worker2`、`worker3` 时，bridge
@@ -150,12 +149,27 @@ python3 test_bridge_64_entries.py \
   --host 127.0.0.1 --port 10000 --workers 4
 ```
 
+### 4.4 系统有效带宽
+
+该 benchmark 统计端到端成功聚合结果的有效带宽，每个 64 槽 round 计为
+`64*8 = 512` 字节；同时报告 FPGA 输入 payload、四端口广播负载及应用 UDP
+往返流量：
+
+```bash
+python3 benchmark_bridge_bandwidth.py \
+  --host 127.0.0.1 --port 10000 \
+  --workers 4 --duration 60 --warmup 10 --timeout 8 \
+  --request-id-start 0x9000
+```
+
 ## 5. 输入输出示例
 
 ### 应用层输入
 
-上面的四 worker 命令提供五个索引。FPGA 内部实际接收固定 64 个槽位；索引
-`6..64` 自动补零。
+上面的四 worker 命令提供五个连续 value。FPGA 内部实际接收固定 64 个槽位；
+尾部槽位自动补零。应用消息固定为 2580 字节（20 字节控制头、5 路各 64 个
+uint64 槽位），物理 FPGA 帧为 556 字节（Ethernet/IPv4/UDP、自定义 round_id
+和 64×8 字节 payload）。
 
 ### bridge 输出
 
@@ -163,7 +177,7 @@ python3 test_bridge_64_entries.py \
 MPI-FPGA bridge 已启动: app_port=10000, mpi_ranks=4
 worker_ifaces=(<host-port-0>,<host-port-1>,<host-port-2>,<host-port-3>), result_ifaces=(<host-port-0>,<host-port-1>,<host-port-2>,<host-port-3>), fpga_dst_mac=ff:ff:ff:ff:ff:ff
 worker0_ip=192.0.2.1 -> 198.51.100.1 worker1_ip=192.0.2.2 -> 198.51.100.2 worker2_ip=192.0.2.3 -> 198.51.100.3 worker3_ip=192.0.2.4 -> 198.51.100.4
-request=4660 worker0=[1:10, 2:20, 3:30, 4:40, 5:50] worker1=[1:1, 2:2, 3:3, 4:4, 5:6] worker2=[1:1, 2:2, 3:3, 4:4, 5:6] worker3=[1:1, 2:2, 3:3, 4:4, 5:7] fpga=[1:13, 2:26, 3:39, 4:52, 5:69] resp=[1:13, 2:26, 3:39, 4:52, 5:69]
+request=4660 worker0=[10, 20, 30, 40, 50] worker1=[1, 2, 3, 4, 5] worker2=[1, 1, 1, 1, 1] worker3=[2, 2, 2, 2, 2] fpga=[14, 25, 35, 46, 58] resp=[14, 25, 35, 46, 58]
 ```
 
 ### 应用层输出
@@ -174,14 +188,14 @@ request_id  : 4660
 worker_count: 4
 entry_count : 5
 status      : 0 (OK)
-worker0     : [1:10, 2:20, 3:30, 4:40, 5:50]
-worker1     : [1:1, 2:2, 3:3, 4:4, 5:6]
-worker2     : [1:1, 2:2, 3:3, 4:4, 5:6]
-worker3     : [1:1, 2:2, 3:3, 4:4, 5:7]
-result      : [1:13, 2:26, 3:39, 4:52, 5:69]
+worker0     : [10, 20, 30, 40, 50]
+worker1     : [1, 2, 3, 4, 5]
+worker2     : [1, 1, 1, 1, 1]
+worker3     : [2, 2, 2, 2, 2]
+result      : [14, 25, 35, 46, 58]
 ```
 
-对于每个索引 `i`，输出结果满足：
+对于每个槽位 `i`，输出结果满足：
 
 ```text
 result[i] = worker0[i] + ... + workerN[i]

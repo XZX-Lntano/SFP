@@ -27,7 +27,7 @@ def request(host, port, payload):
 def run_case(host, port, worker_count):
     workers = [
         [
-            (index, 1000 * (worker + 1) + index)
+            1000 * (worker + 1) + index
             for index in range(1, MAX_ENTRIES + 1)
         ]
         for worker in range(worker_count)
@@ -47,13 +47,13 @@ def run_case(host, port, worker_count):
         ("worker_count", reply["worker_count"] == worker_count),
         ("entry_count", reply["entry_count"] == MAX_ENTRIES),
     ]
-    result = dict(reply["result_entries"])
+    result = reply["result_entries"]
     for index in range(1, MAX_ENTRIES + 1):
         expected = sum(
             1000 * (worker + 1) + index
             for worker in range(worker_count)
         )
-        checks.append((f"index={index}", result.get(index) == expected))
+        checks.append((f"index={index}", result[index - 1] == expected))
     failed = [name for name, ok in checks if not ok]
     if failed:
         print(
@@ -64,7 +64,7 @@ def run_case(host, port, worker_count):
         return False
     print(
         f"{worker_count} worker: PASS, 64 entries, "
-        f"index1={result[1]}, index64={result[64]}"
+        f"value1={result[0]}, value64={result[63]}"
     )
     return True
 
