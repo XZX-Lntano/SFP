@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include <arpa/inet.h>
 #include <errno.h>
 #include <linux/if_packet.h>
@@ -12,7 +14,15 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <sys/select.h>
 #include <unistd.h>
+#include <sched.h>
+
+#ifdef USE_DPDK
+#include <rte_eal.h>
+#include <rte_ethdev.h>
+#include <rte_mbuf.h>
+#endif
 
 #define BRIDGE_MAGIC 0x4d504247u
 #define BRIDGE_VERSION 3u
@@ -39,7 +49,14 @@
 #define FPGA_IP_PROTO_UDP 17u
 #define BRIDGE_MAX_ENTRIES 64u
 #define BRIDGE_MAX_WORKERS 4u
-#define FPGA_PAYLOAD_LEN (2u + BRIDGE_MAX_ENTRIES * sizeof(uint64_t))
+#define FPGA_BATCH_MAGIC 0xa416u
+#define FPGA_BATCH_VERSION 4u
+#define FPGA_BATCH_MAX_ROUNDS 16u
+#define FPGA_BATCH_HEADER_LEN 6u
+#define FPGA_ROUND_HEADER_LEN 8u
+#define FPGA_ROUND_RECORD_LEN (FPGA_ROUND_HEADER_LEN + BRIDGE_MAX_ENTRIES * sizeof(uint64_t))
+#define FPGA_BATCH_PAYLOAD_LEN(n) (FPGA_BATCH_HEADER_LEN + (n) * FPGA_ROUND_RECORD_LEN)
+#define FPGA_MAX_FRAME_LEN 9216u
 #define FPGA_DEFAULT_DPORT 0x2345u
 #define DEFAULT_FPGA_TIMEOUT_MS 5000
 
@@ -80,18 +97,30 @@ typedef struct {
 
 typedef struct {
   int fd, ifindex;
+  int timeout_ms;
   char ifname[IFNAMSIZ];
   uint8_t src_mac[6];
   uint64_t rx_total;
   uint64_t rx_outgoing;
   uint64_t rx_rejected;
   uint64_t rx_other_round;
+#ifdef USE_DPDK
+  int use_dpdk;
+  uint16_t dpdk_port_id;
+  struct rte_mempool *dpdk_pool;
+#endif
 } RawPort;
 
 typedef struct {
   uint16_t index[BRIDGE_MAX_ENTRIES];
   uint64_t value[BRIDGE_MAX_ENTRIES];
 } EntryArray;
+
+typedef struct {
+  uint16_t count;
+  uint16_t round[FPGA_BATCH_MAX_ROUNDS];
+  EntryArray entry[FPGA_BATCH_MAX_ROUNDS];
+} FpgaBatch;
 
 typedef struct {
   uint16_t app_port, fpga_dport, fpga_sport[BRIDGE_MAX_WORKERS];
@@ -157,6 +186,20 @@ static int parse_int(const char *s, int *out) {
     return -1;
   *out = v;
   return 0;
+}
+
+static int bind_rank_cpu(int rank) {
+  const char *base_text = getenv("MPI_FPGA_CPU_BASE");
+  if (!base_text)
+    return 0;
+  char *end;
+  long base = strtol(base_text, &end, 10);
+  if (!base_text[0] || *end || base < 0 || base + 3 >= CPU_SETSIZE)
+    return -1;
+  cpu_set_t set;
+  CPU_ZERO(&set);
+  CPU_SET((int)base + rank, &set);
+  return sched_setaffinity(0, sizeof(set), &set);
 }
 
 static void bridge_host_to_network(BridgeMessage *m) {
@@ -254,11 +297,79 @@ static int open_udp_server(uint16_t port) {
   return fd;
 }
 
+#ifdef USE_DPDK
+static const char *dpdk_pci_for_iface(const char *ifname) {
+  if (!strcmp(ifname, "enp1s0f0np0")) return "0000:01:00.0";
+  if (!strcmp(ifname, "enp1s0f1np1")) return "0000:01:00.1";
+  if (!strcmp(ifname, "enp1s0f2np2")) return "0000:01:00.2";
+  if (!strcmp(ifname, "enp1s0f3np3")) return "0000:01:00.3";
+  return NULL;
+}
+
+static int init_dpdk_owner(RawPort ports[BRIDGE_MAX_WORKERS], const BridgeConfig *cfg) {
+  const char *pci[BRIDGE_MAX_WORKERS];
+  for (unsigned w = 0; w < BRIDGE_MAX_WORKERS; w++)
+    if (!(pci[w] = dpdk_pci_for_iface(cfg->worker_iface[w]))) return -1;
+  char lcore[] = "-l";
+  char core[16];
+  char memory[] = "-n";
+  char channels[] = "4";
+  char in_memory[] = "--in-memory";
+  char file_prefix_arg[] = "--file-prefix=fpga_owner";
+  snprintf(core, sizeof(core), "%d", sched_getcpu());
+  char *eal_argv[] = {"mpi_fpga_bridge", lcore, core, memory, channels,
+                      "-a", (char *)pci[0], "-a", (char *)pci[1],
+                      "-a", (char *)pci[2], "-a", (char *)pci[3],
+                      file_prefix_arg, in_memory};
+  if (rte_eal_init((int)(sizeof(eal_argv)/sizeof(eal_argv[0])), eal_argv) < 0) {
+    fprintf(stderr, "DPDK EAL init failed: %s\n", rte_strerror(rte_errno));
+    return -1;
+  }
+  for (unsigned w = 0; w < BRIDGE_MAX_WORKERS; w++) {
+    RawPort *p = &ports[w];
+    memset(p, 0, sizeof(*p)); p->fd = -1; p->timeout_ms = cfg->fpga_timeout_ms;
+    snprintf(p->ifname, sizeof(p->ifname), "%s", cfg->worker_iface[w]);
+    if (rte_eth_dev_get_port_by_name(pci[w], &p->dpdk_port_id)) goto eth_error;
+    char pool_name[32]; snprintf(pool_name, sizeof(pool_name), "fpga_pool_%u", w);
+    p->dpdk_pool = rte_pktmbuf_pool_create(pool_name, 8192, 256, 0, 10240, rte_socket_id());
+    if (!p->dpdk_pool) goto eth_error;
+    struct rte_eth_conf conf = {0}; uint16_t rx_desc = 1024, tx_desc = 1024;
+    if (rte_eth_dev_configure(p->dpdk_port_id, 1, 1, &conf) ||
+        rte_eth_dev_set_mtu(p->dpdk_port_id, 9000) ||
+        rte_eth_dev_adjust_nb_rx_tx_desc(p->dpdk_port_id, &rx_desc, &tx_desc) ||
+        rte_eth_rx_queue_setup(p->dpdk_port_id, 0, rx_desc, rte_eth_dev_socket_id(p->dpdk_port_id), NULL, p->dpdk_pool) ||
+        rte_eth_tx_queue_setup(p->dpdk_port_id, 0, tx_desc, rte_eth_dev_socket_id(p->dpdk_port_id), NULL) ||
+        rte_eth_dev_start(p->dpdk_port_id)) goto eth_error;
+    rte_eth_promiscuous_enable(p->dpdk_port_id); p->use_dpdk = 1;
+  }
+  return 0;
+eth_error:
+  fprintf(stderr, "DPDK Ethernet setup failed: %s\n", rte_strerror(rte_errno)); return -1;
+}
+
+static int dpdk_send_frame(RawPort *p, const uint8_t *frame, size_t len) {
+  struct rte_mbuf *m = rte_pktmbuf_alloc(p->dpdk_pool);
+  if (!m) return -1;
+  char *dst = rte_pktmbuf_append(m, len);
+  if (!dst) { rte_pktmbuf_free(m); return -1; }
+  memcpy(dst, frame, len);
+  if (rte_eth_tx_burst(p->dpdk_port_id, 0, &m, 1) != 1) {
+    rte_pktmbuf_free(m);
+    return -1;
+  }
+  return 0;
+}
+#endif
+
 static int init_raw_port(RawPort *p, const char *name, int timeout) {
 
   memset(p, 0, sizeof(*p));
   p->fd = -1;
+  p->timeout_ms = timeout;
   snprintf(p->ifname, sizeof(p->ifname), "%s", name);
+#ifdef USE_DPDK
+  (void)name;
+#endif
   p->fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
   if (p->fd < 0)
     return -1;
@@ -304,9 +415,24 @@ fail:
 }
 
 static void close_raw_port(RawPort *p) {
+#ifdef USE_DPDK
+  if (p->use_dpdk) {
+    rte_eth_dev_stop(p->dpdk_port_id);
+    rte_eth_dev_close(p->dpdk_port_id);
+    return;
+  }
+#endif
   if (p->fd >= 0)
     close(p->fd);
   p->fd = -1;
+}
+
+static const char *raw_port_error(void) {
+#ifdef USE_DPDK
+  if (getenv("MPI_FPGA_DPDK"))
+    return rte_strerror(rte_errno);
+#endif
+  return strerror(errno);
 }
 
 static void load_entries(const BridgeEntry *in, uint16_t n, EntryArray *out) {
@@ -318,57 +444,84 @@ static void load_entries(const BridgeEntry *in, uint16_t n, EntryArray *out) {
   }
 }
 
-static int send_frame(const RawPort *p, const BridgeConfig *c, unsigned w,
-                      uint16_t round, uint8_t workers, const EntryArray *e) {
-  uint8_t frame[2048] = {0};
+static int build_batch_frame(uint8_t frame[FPGA_MAX_FRAME_LEN], size_t *frame_len,
+                             const BridgeConfig *c, unsigned w,
+                             uint8_t workers, const FpgaBatch *batch) {
+  memset(frame, 0, FPGA_MAX_FRAME_LEN);
   EthernetHeader *eth = (EthernetHeader *)frame;
   Ipv4Header *ip = (Ipv4Header *)(frame + 14);
   UdpHeader *udp = (UdpHeader *)(frame + 34);
-
   uint8_t *payload = frame + 42;
+  size_t payload_len = FPGA_BATCH_PAYLOAD_LEN(batch->count);
+
+  if (!batch->count || batch->count > FPGA_BATCH_MAX_ROUNDS ||
+      42 + payload_len > FPGA_MAX_FRAME_LEN) {
+    errno = EMSGSIZE;
+    return -1;
+  }
   memcpy(eth->dst, c->fpga_dst_mac, 6);
   memcpy(eth->src, fpga_request_src_mac, sizeof(eth->src));
   eth->ethertype = htons(FPGA_ETHERTYPE_IPV4);
   ip->version_ihl = 0x45;
   ip->ttl = workers;
   ip->protocol = FPGA_IP_PROTO_UDP;
-  ip->total_length = htons(20 + 8 + FPGA_PAYLOAD_LEN);
+  ip->total_length = htons(20 + 8 + payload_len);
   ip->src_ip = htonl(c->worker_src_ip[w]);
   ip->dst_ip = htonl(c->worker_dst_ip[w]);
   ip->checksum = htons(ipv4_checksum(ip, sizeof(*ip)));
   udp->src_port = htons(c->fpga_sport[w]);
   udp->dst_port = htons(c->fpga_dport);
-  udp->length = htons(8 + FPGA_PAYLOAD_LEN);
-  payload[0] = round >> 8;
-  payload[1] = round;
+  udp->length = htons(8 + payload_len);
+  payload[0] = FPGA_BATCH_MAGIC >> 8;
+  payload[1] = (uint8_t)FPGA_BATCH_MAGIC;
+  payload[2] = FPGA_BATCH_VERSION;
+  payload[3] = batch->count;
 
-  for (unsigned i = 0; i < 64; i++) {
-    uint64_t val = hton64(e->value[i]);
-    size_t off = 2 + i * sizeof(uint64_t);
-    memcpy(payload + off, &val, sizeof(val));
+  for (unsigned r = 0; r < batch->count; r++) {
+    size_t record = FPGA_BATCH_HEADER_LEN + r * FPGA_ROUND_RECORD_LEN;
+    payload[record] = batch->round[r] >> 8;
+    payload[record + 1] = batch->round[r];
+    for (unsigned i = 0; i < BRIDGE_MAX_ENTRIES; i++) {
+      uint64_t val = hton64(batch->entry[r].value[i]);
+      memcpy(payload + record + FPGA_ROUND_HEADER_LEN + i * sizeof(val),
+             &val, sizeof(val));
+    }
   }
 
-  size_t len = 14 + 20 + 8 + FPGA_PAYLOAD_LEN;
+  *frame_len = 42 + payload_len;
+  return 0;
+}
+
+static int send_batch_frame(const RawPort *p, const BridgeConfig *c, unsigned w,
+                            uint8_t workers, const FpgaBatch *batch) {
+  uint8_t frame[FPGA_MAX_FRAME_LEN];
+  size_t len;
+  if (build_batch_frame(frame, &len, c, w, workers, batch))
+    return -1;
   struct sockaddr_ll a = {.sll_family = AF_PACKET,
                           .sll_ifindex = p->ifindex,
                           .sll_halen = ETH_ALEN};
   memcpy(a.sll_addr, c->fpga_dst_mac, 6);
+#ifdef USE_DPDK
+  if (p->use_dpdk)
+    return dpdk_send_frame((RawPort *)p, frame, len);
+#endif
   return sendto(p->fd, frame, len, 0, (struct sockaddr *)&a, sizeof(a)) ==
                  (ssize_t)len
              ? 0
              : -1;
 }
 
-static int parse_result(RawPort *port, const uint8_t *b, ssize_t n,
-                        const struct sockaddr_ll *a, uint16_t dport,
-                        uint16_t *round, EntryArray *out) {
+static int parse_batch_result(RawPort *port, const uint8_t *b, ssize_t n,
+                              const struct sockaddr_ll *a, uint16_t dport,
+                              FpgaBatch *out) {
 
   port->rx_total++;
-  if (a->sll_pkttype == PACKET_OUTGOING) {
+  if (a && a->sll_pkttype == PACKET_OUTGOING) {
     port->rx_outgoing++;
     return 0;
   }
-  if (n < 14 + 20 + 8 + (ssize_t)FPGA_PAYLOAD_LEN) {
+  if (n < 42 + (ssize_t)FPGA_BATCH_HEADER_LEN) {
     port->rx_rejected++;
     return 0;
   }
@@ -379,8 +532,7 @@ static int parse_result(RawPort *port, const uint8_t *b, ssize_t n,
   }
   const Ipv4Header *ip = (const Ipv4Header *)(b + 14);
   size_t ihl = (ip->version_ihl & 15) * 4;
-  if (ip->protocol != 17 || ihl < 20 ||
-      n < 14 + (ssize_t)ihl + 8 + (ssize_t)FPGA_PAYLOAD_LEN) {
+  if (ip->protocol != 17 || ihl < 20 || n < 14 + (ssize_t)ihl + 8 + 6) {
     port->rx_rejected++;
     return 0;
   }
@@ -390,19 +542,49 @@ static int parse_result(RawPort *port, const uint8_t *b, ssize_t n,
     return 0;
   }
   const uint8_t *p = b + 14 + ihl + 8;
-  *round = ((uint16_t)p[0] << 8) | p[1];
-  for (unsigned i = 0; i < 64; i++) {
-    uint64_t val;
-    size_t off = 2 + i * sizeof(uint64_t);
-    memcpy(&val, p + off, sizeof(val));
-    out->index[i] = i + 1;
-    out->value[i] = ntoh64(val);
+  size_t udp_payload_len = ntohs(u->length) >= 8 ? ntohs(u->length) - 8 : 0;
+  uint16_t magic = ((uint16_t)p[0] << 8) | p[1];
+  unsigned count = p[3];
+  size_t required = FPGA_BATCH_PAYLOAD_LEN(count);
+  if (magic != FPGA_BATCH_MAGIC || p[2] != FPGA_BATCH_VERSION ||
+      !count || count > FPGA_BATCH_MAX_ROUNDS || udp_payload_len != required ||
+      n < 14 + (ssize_t)ihl + 8 + (ssize_t)required) {
+    port->rx_rejected++;
+    return 0;
+  }
+  memset(out, 0, sizeof(*out));
+  out->count = count;
+  for (unsigned r = 0; r < count; r++) {
+    size_t record = FPGA_BATCH_HEADER_LEN + r * FPGA_ROUND_RECORD_LEN;
+    out->round[r] = ((uint16_t)p[record] << 8) | p[record + 1];
+    for (unsigned i = 0; i < BRIDGE_MAX_ENTRIES; i++) {
+      uint64_t val;
+      memcpy(&val, p + record + FPGA_ROUND_HEADER_LEN + i * sizeof(val),
+             sizeof(val));
+      out->entry[r].index[i] = i + 1;
+      out->entry[r].value[i] = ntoh64(val);
+    }
   }
   return 1;
 }
 
-static void drain(RawPort *p, uint16_t port, uint16_t round) {
-  uint8_t b[2048];
+static void drain(RawPort *p, uint16_t port) {
+  uint8_t b[FPGA_MAX_FRAME_LEN];
+#ifdef USE_DPDK
+  if (p->use_dpdk) {
+    struct rte_mbuf *m[32];
+    uint16_t count;
+    while ((count = rte_eth_rx_burst(p->dpdk_port_id, 0, m, 32))) {
+      for (uint16_t i = 0; i < count; i++) {
+        FpgaBatch x;
+        (void)parse_batch_result(p, rte_pktmbuf_mtod(m[i], uint8_t *),
+                                 rte_pktmbuf_pkt_len(m[i]), NULL, port, &x);
+        rte_pktmbuf_free(m[i]);
+      }
+    }
+    return;
+  }
+#endif
   for (;;) {
     struct sockaddr_ll a;
     socklen_t l = sizeof(a);
@@ -410,26 +592,51 @@ static void drain(RawPort *p, uint16_t port, uint16_t round) {
         recvfrom(p->fd, b, sizeof(b), MSG_DONTWAIT, (struct sockaddr *)&a, &l);
     if (n < 0)
       return;
-    uint16_t seen;
-    EntryArray x;
-    if (parse_result(p, b, n, &a, port, &seen, &x) && seen == round)
-      continue;
+    FpgaBatch x;
+    (void)parse_batch_result(p, b, n, &a, port, &x);
   }
 }
 
-static int receive_result(RawPort *p, uint16_t port, uint16_t round,
-                          EntryArray *out) {
-  uint8_t b[2048];
+static int batch_matches(const FpgaBatch *expected, const FpgaBatch *seen) {
+  if (seen->count != expected->count)
+    return 0;
+  for (unsigned r = 0; r < seen->count; r++)
+    if (seen->round[r] != expected->round[r])
+      return 0;
+  return 1;
+}
+
+static int receive_batch_result(RawPort *p, uint16_t port,
+                                const FpgaBatch *expected, FpgaBatch *out) {
+  uint8_t b[FPGA_MAX_FRAME_LEN];
+#ifdef USE_DPDK
+  if (p->use_dpdk) {
+    uint64_t start = rte_get_timer_cycles();
+    uint64_t timeout = rte_get_timer_hz() * (uint64_t)p->timeout_ms / 1000;
+    while (rte_get_timer_cycles() - start < timeout) {
+      struct rte_mbuf *m[32];
+      uint16_t count = rte_eth_rx_burst(p->dpdk_port_id, 0, m, 32);
+      for (uint16_t i = 0; i < count; i++) {
+        FpgaBatch seen;
+        int valid = parse_batch_result(p, rte_pktmbuf_mtod(m[i], uint8_t *),
+                                       rte_pktmbuf_pkt_len(m[i]), NULL, port, &seen);
+        rte_pktmbuf_free(m[i]);
+        if (valid && batch_matches(expected, &seen)) { *out = seen; return 0; }
+        if (valid) p->rx_other_round++;
+      }
+    }
+    return -1;
+  }
+#endif
   for (;;) {
     struct sockaddr_ll a;
     socklen_t l = sizeof(a);
     ssize_t n = recvfrom(p->fd, b, sizeof(b), 0, (struct sockaddr *)&a, &l);
     if (n < 0)
       return -1;
-    uint16_t seen;
-    if (parse_result(p, b, n, &a, port, &seen, out)) {
-      if (seen == round)
-        return 0;
+    FpgaBatch seen;
+    if (parse_batch_result(p, b, n, &a, port, &seen)) {
+      if (batch_matches(expected, &seen)) { *out = seen; return 0; }
       p->rx_other_round++;
     }
   }
@@ -464,18 +671,9 @@ static void print_ip(uint32_t address) {
   printf("%s", text);
 }
 
-static void print_entries(const BridgeEntry *entries, uint16_t count) {
-  printf("[");
-  for (uint16_t i = 0; i < count; i++) {
-    if (i)
-      printf(", ");
-    printf("%llu", (unsigned long long)entries[i]);
-  }
-  printf("]");
-}
-
 static void print_startup(const BridgeConfig *cfg) {
-  printf("MPI-FPGA bridge 已启动: app_port=%u, mpi_ranks=4\n", cfg->app_port);
+  printf("MPI-FPGA bridge v4 已启动: app_port=%u, mpi_ranks=4, batch=1..16, jumbo_max=8368B\n",
+         cfg->app_port);
   printf("worker_ifaces=(%s,%s,%s,%s), result_ifaces=(%s,%s,%s,%s), ",
          cfg->worker_iface[0], cfg->worker_iface[1], cfg->worker_iface[2],
          cfg->worker_iface[3], cfg->worker_iface[0], cfg->worker_iface[1],
@@ -492,21 +690,6 @@ static void print_startup(const BridgeConfig *cfg) {
     printf(" -> ");
     print_ip(cfg->worker_dst_ip[worker]);
   }
-  printf("\n");
-  fflush(stdout);
-}
-
-static void print_request_summary(const BridgeMessage *request,
-                                  const BridgeMessage *response) {
-  printf("request=%u", request->request_id);
-  for (uint16_t worker = 0; worker < request->worker_count; worker++) {
-    printf(" worker%u=", worker);
-    print_entries(request->worker_entries[worker], request->entry_count);
-  }
-  printf(" fpga=");
-  print_entries(response->result_entries, response->entry_count);
-  printf(" resp=");
-  print_entries(response->result_entries, response->entry_count);
   printf("\n");
   fflush(stdout);
 }
@@ -561,6 +744,11 @@ int main(int argc, char **argv) {
     MPI_Finalize();
     return 2;
   }
+  if (bind_rank_cpu(rank)) {
+    fprintf(stderr, "rank%d: CPU affinity setup failed: %s\n", rank, strerror(errno));
+    MPI_Finalize();
+    return 2;
+  }
   BridgeConfig cfg;
   if (parse_config(argc, argv, &cfg, rank)) {
     MPI_Finalize();
@@ -569,6 +757,11 @@ int main(int argc, char **argv) {
 
   int app = -1;
   RawPort raw = {.fd = -1};
+  RawPort dpdk_ports[BRIDGE_MAX_WORKERS];
+  int dpdk_owner = 0;
+#ifdef USE_DPDK
+  dpdk_owner = getenv("MPI_FPGA_DPDK") != NULL;
+#endif
 
   if (!rank) {
     app = open_udp_server(cfg.app_port);
@@ -578,122 +771,227 @@ int main(int argc, char **argv) {
     }
   }
 
-  if (init_raw_port(&raw, cfg.worker_iface[rank], cfg.fpga_timeout_ms)) {
+  if (dpdk_owner && !rank) {
+#ifdef USE_DPDK
+    if (init_dpdk_owner(dpdk_ports, &cfg)) {
+      fprintf(stderr, "rank0: DPDK four-port owner init failed: %s\n", raw_port_error());
+      MPI_Abort(MPI_COMM_WORLD, 4);
+    }
+#endif
+  } else if (!dpdk_owner && init_raw_port(&raw, cfg.worker_iface[rank], cfg.fpga_timeout_ms)) {
     fprintf(stderr, "rank%d: 无法打开 %s: %s\n", rank,
-            cfg.worker_iface[rank], strerror(errno));
+            cfg.worker_iface[rank], raw_port_error());
     MPI_Abort(MPI_COMM_WORLD, 4);
   }
 
   if (!rank)
     print_startup(&cfg);
 
+  BridgeMessage pending_req = {0};
+  struct sockaddr_in pending_peer = {0};
+  socklen_t pending_peer_len = 0;
+  int pending_valid = 0;
+
   for (;;) {
-    BridgeMessage req = {0};
-    struct sockaddr_in peer = {0};
-    socklen_t peer_len = sizeof(peer);
-    uint16_t ctrl = INTERNAL_MSG_NOOP, immediate = 0;
+    BridgeMessage req[FPGA_BATCH_MAX_ROUNDS] = {{0}};
+    struct sockaddr_in peer[FPGA_BATCH_MAX_ROUNDS] = {{0}};
+    socklen_t peer_len[FPGA_BATCH_MAX_ROUNDS] = {0};
+    int control[2] = {INTERNAL_MSG_NOOP, 0};
+
     if (!rank) {
-      ssize_t n = recvfrom(app, &req, sizeof(req), 0, (struct sockaddr *)&peer,
-                           &peer_len);
-      if (n != (ssize_t)sizeof(req))
+      BridgeMessage first = {0};
+      struct sockaddr_in first_peer = {0};
+      socklen_t first_peer_len = sizeof(first_peer);
+      ssize_t n;
+      if (pending_valid) {
+        first = pending_req;
+        first_peer = pending_peer;
+        first_peer_len = pending_peer_len;
+        pending_valid = 0;
+        n = sizeof(first);
+      } else {
+        n = recvfrom(app, &first, sizeof(first), 0,
+                     (struct sockaddr *)&first_peer, &first_peer_len);
+        if (n == (ssize_t)sizeof(first)) bridge_network_to_host(&first);
+      }
+
+      int immediate;
+      if (n == (ssize_t)sizeof(first))
+        immediate = validate_message(&first);
+      else
         immediate = BRIDGE_STATUS_RECV_FAILED;
-      else {
-        bridge_network_to_host(&req);
-        immediate = validate_message(&req);
-        if (!immediate)
-          ctrl = req.msg_type;
-      }
-    }
-
-    MPI_Bcast(&ctrl, 1, MPI_UNSIGNED_SHORT, 0, MPI_COMM_WORLD);
-    if (ctrl == APP_MSG_STOP)
-      break;
-    if (ctrl != APP_MSG_REQUEST) {
-      if (!rank) {
+      if (immediate) {
         BridgeMessage res;
-        error_response(&req, &res, immediate);
+        error_response(&first, &res, immediate);
         bridge_host_to_network(&res);
-        sendto(app, &res, sizeof(res), 0, (struct sockaddr *)&peer, peer_len);
+        sendto(app, &res, sizeof(res), 0, (struct sockaddr *)&first_peer,
+               first_peer_len);
+      } else if (first.msg_type == APP_MSG_STOP) {
+        control[0] = APP_MSG_STOP;
+      } else {
+        control[0] = APP_MSG_REQUEST;
+        req[0] = first; peer[0] = first_peer; peer_len[0] = first_peer_len;
+        control[1] = 1;
+        uint16_t used_slots = 1u << (first.request_id & 15u);
+
+        while (control[1] < (int)FPGA_BATCH_MAX_ROUNDS) {
+          BridgeMessage next = {0};
+          struct sockaddr_in next_peer = {0};
+          socklen_t next_peer_len = sizeof(next_peer);
+          n = recvfrom(app, &next, sizeof(next), MSG_DONTWAIT,
+                       (struct sockaddr *)&next_peer, &next_peer_len);
+          if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
+          if (n != (ssize_t)sizeof(next)) break;
+          bridge_network_to_host(&next);
+          immediate = validate_message(&next);
+          if (immediate) {
+            BridgeMessage res;
+            error_response(&next, &res, immediate);
+            bridge_host_to_network(&res);
+            sendto(app, &res, sizeof(res), 0, (struct sockaddr *)&next_peer,
+                   next_peer_len);
+            continue;
+          }
+          uint16_t slot_bit = 1u << (next.request_id & 15u);
+          if (next.msg_type != APP_MSG_REQUEST ||
+              next.worker_count != first.worker_count || (used_slots & slot_bit)) {
+            pending_req = next; pending_peer = next_peer;
+            pending_peer_len = next_peer_len; pending_valid = 1;
+            break;
+          }
+          used_slots |= slot_bit;
+          req[control[1]] = next;
+          peer[control[1]] = next_peer;
+          peer_len[control[1]] = next_peer_len;
+          control[1]++;
+        }
       }
-      continue;
     }
 
-    MPI_Bcast(&req, sizeof(req), MPI_BYTE, 0, MPI_COMM_WORLD);
-    uint16_t round = req.request_id;
-    EntryArray local = {0};
+    MPI_Request mpi_req;
+    MPI_Ibcast(control, 2, MPI_INT, 0, MPI_COMM_WORLD, &mpi_req);
+    MPI_Wait(&mpi_req, MPI_STATUS_IGNORE);
+    if (control[0] == APP_MSG_STOP) break;
+    if (control[0] != APP_MSG_REQUEST) continue;
+
+    FpgaBatch worker_batch[BRIDGE_MAX_WORKERS] = {{0}};
+    if (!rank) {
+      for (unsigned w = 0; w < BRIDGE_MAX_WORKERS; w++) {
+        worker_batch[w].count = control[1];
+        for (int b = 0; b < control[1]; b++) {
+          worker_batch[w].round[b] = (uint16_t)req[b].request_id;
+          if (w < req[b].worker_count)
+            load_entries(req[b].worker_entries[w], req[b].entry_count,
+                         &worker_batch[w].entry[b]);
+        }
+      }
+    }
+
+    FpgaBatch local_input = {0};
+    MPI_Iscatter(worker_batch, sizeof(FpgaBatch), MPI_BYTE, &local_input,
+                 sizeof(FpgaBatch), MPI_BYTE, 0, MPI_COMM_WORLD, &mpi_req);
+    MPI_Wait(&mpi_req, MPI_STATUS_IGNORE);
+
+    FpgaBatch gathered_input[BRIDGE_MAX_WORKERS] = {{0}};
+    MPI_Iallgather(&local_input, sizeof(FpgaBatch), MPI_BYTE, gathered_input,
+                   sizeof(FpgaBatch), MPI_BYTE, MPI_COMM_WORLD, &mpi_req);
+    MPI_Wait(&mpi_req, MPI_STATUS_IGNORE);
+
     int local_status = 0;
-    raw.rx_total = 0;
-    raw.rx_outgoing = 0;
-    raw.rx_rejected = 0;
-    raw.rx_other_round = 0;
-    drain(&raw, cfg.fpga_dport, round);
-    MPI_Barrier(MPI_COMM_WORLD);
+    FpgaBatch local_result = {0};
+    FpgaBatch port_result[BRIDGE_MAX_WORKERS] = {{0}};
+    if (!dpdk_owner) {
+      raw.rx_total = raw.rx_outgoing = raw.rx_rejected = raw.rx_other_round = 0;
+      drain(&raw, cfg.fpga_dport);
+    } else if (!rank) {
+      for (unsigned w = 0; w < BRIDGE_MAX_WORKERS; w++)
+        drain(&dpdk_ports[w], cfg.fpga_dport);
+    }
+    MPI_Ibarrier(MPI_COMM_WORLD, &mpi_req);
+    MPI_Wait(&mpi_req, MPI_STATUS_IGNORE);
 
-    if ((unsigned)rank < req.worker_count) {
-      EntryArray in;
-      load_entries(req.worker_entries[rank], req.entry_count, &in);
-      if (send_frame(&raw, &cfg, rank, round, req.worker_count, &in)) {
+    unsigned workers = !rank ? req[0].worker_count : 0;
+    MPI_Ibcast(&workers, 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD, &mpi_req);
+    MPI_Wait(&mpi_req, MPI_STATUS_IGNORE);
+
+    if (dpdk_owner) {
+      if (!rank) {
+        for (unsigned w = 0; w < workers; w++)
+          if (send_batch_frame(&dpdk_ports[w], &cfg, w, workers,
+                               &gathered_input[w]))
+            local_status = BRIDGE_STATUS_FPGA_SEND_FAILED;
+        if (!local_status)
+          for (unsigned w = 0; w < BRIDGE_MAX_WORKERS; w++)
+            if (receive_batch_result(&dpdk_ports[w], cfg.fpga_dport,
+                                     &gathered_input[0], &port_result[w]))
+              local_status = BRIDGE_STATUS_FPGA_TIMEOUT;
+      }
+      MPI_Iscatter(port_result, sizeof(FpgaBatch), MPI_BYTE, &local_result,
+                   sizeof(FpgaBatch), MPI_BYTE, 0, MPI_COMM_WORLD, &mpi_req);
+      MPI_Wait(&mpi_req, MPI_STATUS_IGNORE);
+    } else {
+      if ((unsigned)rank < workers &&
+          send_batch_frame(&raw, &cfg, rank, workers, &local_input))
         local_status = BRIDGE_STATUS_FPGA_SEND_FAILED;
-        fprintf(stderr, "rank%d: send round=%u failed on %s: %s\n", rank,
-                round, raw.ifname, strerror(errno));
-      } else {
-        /* Success is reported once by rank0 after all broadcast copies agree. */
-      }
-    }
-
-    /* Ensure every raw socket is armed before any rank waits for the reply. */
-    MPI_Barrier(MPI_COMM_WORLD);
-
-    if (!local_status) {
-      if (receive_result(&raw, cfg.fpga_dport, round, &local)) {
+      MPI_Ibarrier(MPI_COMM_WORLD, &mpi_req);
+      MPI_Wait(&mpi_req, MPI_STATUS_IGNORE);
+      if (!local_status && receive_batch_result(&raw, cfg.fpga_dport,
+                                                &local_input, &local_result)) {
         local_status = BRIDGE_STATUS_FPGA_TIMEOUT;
-        fprintf(stderr, "rank%d: timeout waiting for round=%u on %s\n", rank,
-                round, raw.ifname);
-        log_rx_stats(&raw, rank, round);
-      } else {
-        /* Keep normal output compact; failures retain per-rank diagnostics. */
+        fprintf(stderr, "rank%d: timeout waiting for batch first_round=%u on %s\n",
+                rank, local_input.round[0], raw.ifname);
+        log_rx_stats(&raw, rank, local_input.round[0]);
       }
     }
+
     int status = 0;
-    MPI_Allreduce(&local_status, &status, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-    EntryArray all[4];
-    
+    MPI_Iallreduce(&local_status, &status, 1, MPI_INT, MPI_MAX,
+                   MPI_COMM_WORLD, &mpi_req);
+    MPI_Wait(&mpi_req, MPI_STATUS_IGNORE);
+    FpgaBatch all_result[BRIDGE_MAX_WORKERS] = {{0}};
     if (!status) {
-      MPI_Gather(&local, sizeof(local), MPI_BYTE, all, sizeof(local), MPI_BYTE,
-                 0, MPI_COMM_WORLD);
+      MPI_Iallgather(&local_result, sizeof(FpgaBatch), MPI_BYTE, all_result,
+                     sizeof(FpgaBatch), MPI_BYTE, MPI_COMM_WORLD, &mpi_req);
+      MPI_Wait(&mpi_req, MPI_STATUS_IGNORE);
       if (!rank)
-        for (unsigned w = 1; w < 4; w++)
-          if (memcmp(&all[0], &all[w], sizeof(EntryArray)))
+        for (unsigned w = 1; w < BRIDGE_MAX_WORKERS; w++)
+          if (memcmp(&all_result[0], &all_result[w], sizeof(FpgaBatch)))
             status = BRIDGE_STATUS_RESULT_MISMATCH;
     }
+    MPI_Ibcast(&status, 1, MPI_INT, 0, MPI_COMM_WORLD, &mpi_req);
+    MPI_Wait(&mpi_req, MPI_STATUS_IGNORE);
 
-    MPI_Bcast(&status, 1, MPI_INT, 0, MPI_COMM_WORLD);
     if (!rank) {
-      if (status) {
-        BridgeMessage res;
-        error_response(&req, &res, status);
+      for (int b = 0; b < control[1]; b++) {
+        BridgeMessage res = {0};
+        if (status) {
+          error_response(&req[b], &res, status);
+        } else {
+          res.magic = BRIDGE_MAGIC;
+          res.version = BRIDGE_VERSION;
+          res.msg_type = APP_MSG_RESPONSE;
+          res.request_id = req[b].request_id;
+          res.entry_count = req[b].entry_count;
+          res.worker_count = req[b].worker_count;
+          res.reserved = control[1];
+          memcpy(res.worker_entries, req[b].worker_entries,
+                 sizeof(res.worker_entries));
+          for (unsigned i = 0; i < req[b].entry_count; i++)
+            res.result_entries[i] = all_result[0].entry[b].value[i];
+        }
         bridge_host_to_network(&res);
-        sendto(app, &res, sizeof(res), 0, (struct sockaddr *)&peer, peer_len);
-        continue;
+        sendto(app, &res, sizeof(res), 0, (struct sockaddr *)&peer[b],
+               peer_len[b]);
       }
-      BridgeMessage res = {0};
-      res.magic = BRIDGE_MAGIC;
-      res.version = BRIDGE_VERSION;
-      res.msg_type = APP_MSG_RESPONSE;
-      res.request_id = req.request_id;
-      res.entry_count = req.entry_count;
-      res.worker_count = req.worker_count;
-      memcpy(res.worker_entries, req.worker_entries,
-             sizeof(res.worker_entries));
-      for (unsigned i = 0; i < req.entry_count; i++)
-        res.result_entries[i] = all[0].value[i];
-      print_request_summary(&req, &res);
-      bridge_host_to_network(&res);
-      sendto(app, &res, sizeof(res), 0, (struct sockaddr *)&peer, peer_len);
     }
   }
 
-  close_raw_port(&raw);
+  if (dpdk_owner && !rank) {
+    for (unsigned w = 0; w < BRIDGE_MAX_WORKERS; w++)
+      close_raw_port(&dpdk_ports[w]);
+  } else {
+    close_raw_port(&raw);
+  }
   if (!rank)
     close(app);
   MPI_Finalize();

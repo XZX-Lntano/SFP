@@ -93,7 +93,7 @@ def decode_message(raw):
         entry_count,
         worker_count,
         status,
-        _,
+        reserved,
     ) = values[:8]
     cursor = 8
     workers = []
@@ -115,6 +115,7 @@ def decode_message(raw):
         "entry_count": entry_count,
         "worker_count": worker_count,
         "status": status,
+        "batch_size": reserved,
         "workers": workers,
         "result_entries": result,
     }
@@ -189,6 +190,7 @@ def main():
     print(f"request_id  : {message['request_id']}")
     print(f"worker_count: {message['worker_count']}")
     print(f"entry_count : {message['entry_count']}")
+    print(f"batch_size  : {message['batch_size']}")
     print(
         f"status      : {message['status']} "
         f"({STATUS.get(message['status'], 'UNKNOWN')})"

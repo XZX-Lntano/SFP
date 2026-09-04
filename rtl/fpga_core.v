@@ -760,6 +760,7 @@ wire [3:0]                                    worker_raw_rx_tvalid;
 wire [3:0]                                    worker_raw_rx_tready;
 wire [3:0]                                    worker_raw_rx_tlast;
 wire [4*SWITCH_AXIS_USER_WIDTH-1:0]           worker_raw_rx_tuser;
+wire [3:0]                                    worker_raw_rx_overflow;
 
 wire [AXIS_ETH_DATA_WIDTH-1:0]                pair_rx_tdata;
 wire [AXIS_ETH_KEEP_WIDTH-1:0]                pair_rx_tkeep;
@@ -768,6 +769,15 @@ wire                                          pair_rx_tready;
 wire                                          pair_rx_tlast;
 wire [PORT_COUNT-1:0]                         pair_rx_tdest;
 wire [SWITCH_AXIS_USER_WIDTH-1:0]             pair_rx_tuser;
+
+(* mark_debug = "true" *) reg [63:0] agg_tx_packet_count_0 = 0;
+(* mark_debug = "true" *) reg [63:0] agg_tx_packet_count_1 = 0;
+(* mark_debug = "true" *) reg [63:0] agg_tx_packet_count_2 = 0;
+(* mark_debug = "true" *) reg [63:0] agg_tx_packet_count_3 = 0;
+(* mark_debug = "true" *) reg [63:0] agg_tx_byte_count_0 = 0;
+(* mark_debug = "true" *) reg [63:0] agg_tx_byte_count_1 = 0;
+(* mark_debug = "true" *) reg [63:0] agg_tx_byte_count_2 = 0;
+(* mark_debug = "true" *) reg [63:0] agg_tx_byte_count_3 = 0;
 
 function [PORT_COUNT-1:0] pair_dest_mask;
     input integer port_index;
@@ -1065,7 +1075,7 @@ generate
                 .s_status_good_frame(),
                 .m_status_depth(),
                 .m_status_depth_commit(),
-                .m_status_overflow(),
+                .m_status_overflow(worker_raw_rx_overflow[n +: 1]),
                 .m_status_bad_frame(),
                 .m_status_good_frame()
             );
@@ -1220,18 +1230,17 @@ generate
     end
 endgenerate
 
-axis_udp_pair_aggregator #(
+axis_udp_batch_aggregator #(
     .DATA_WIDTH(AXIS_ETH_DATA_WIDTH),
     .KEEP_WIDTH(AXIS_ETH_KEEP_WIDTH),
     .USER_WIDTH(SWITCH_AXIS_USER_WIDTH),
     .DEST_WIDTH(PORT_COUNT),
-    .FIFO_DEPTH(SWITCH_FIFO_DEPTH),
-    .META_FIFO_DEPTH(4),
     .ENTRY_COUNT(64),
+    .ROUND_SLOTS(16),
     .AGG_UDP_PORT(PAIR_UDP_PORT),
     .RESULT_DEST(PAIR_RESULT_DEST[PORT_COUNT-1:0])
 )
-axis_udp_pair_aggregator_inst (
+axis_udp_batch_aggregator_inst (
     .clk(clk_300mhz),
     .rst(rst_300mhz),
     .s_axis_0_tdata(worker_raw_rx_tdata[0*AXIS_ETH_DATA_WIDTH +: AXIS_ETH_DATA_WIDTH]),
@@ -1240,24 +1249,28 @@ axis_udp_pair_aggregator_inst (
     .s_axis_0_tready(worker_raw_rx_tready[0 +: 1]),
     .s_axis_0_tlast(worker_raw_rx_tlast[0 +: 1]),
     .s_axis_0_tuser(worker_raw_rx_tuser[0*SWITCH_AXIS_USER_WIDTH +: SWITCH_AXIS_USER_WIDTH]),
+    .s_axis_0_overflow(worker_raw_rx_overflow[0]),
     .s_axis_1_tdata(worker_raw_rx_tdata[1*AXIS_ETH_DATA_WIDTH +: AXIS_ETH_DATA_WIDTH]),
     .s_axis_1_tkeep(worker_raw_rx_tkeep[1*AXIS_ETH_KEEP_WIDTH +: AXIS_ETH_KEEP_WIDTH]),
     .s_axis_1_tvalid(worker_raw_rx_tvalid[1 +: 1]),
     .s_axis_1_tready(worker_raw_rx_tready[1 +: 1]),
     .s_axis_1_tlast(worker_raw_rx_tlast[1 +: 1]),
     .s_axis_1_tuser(worker_raw_rx_tuser[1*SWITCH_AXIS_USER_WIDTH +: SWITCH_AXIS_USER_WIDTH]),
+    .s_axis_1_overflow(worker_raw_rx_overflow[1]),
     .s_axis_2_tdata(worker_raw_rx_tdata[2*AXIS_ETH_DATA_WIDTH +: AXIS_ETH_DATA_WIDTH]),
     .s_axis_2_tkeep(worker_raw_rx_tkeep[2*AXIS_ETH_KEEP_WIDTH +: AXIS_ETH_KEEP_WIDTH]),
     .s_axis_2_tvalid(worker_raw_rx_tvalid[2 +: 1]),
     .s_axis_2_tready(worker_raw_rx_tready[2 +: 1]),
     .s_axis_2_tlast(worker_raw_rx_tlast[2 +: 1]),
     .s_axis_2_tuser(worker_raw_rx_tuser[2*SWITCH_AXIS_USER_WIDTH +: SWITCH_AXIS_USER_WIDTH]),
+    .s_axis_2_overflow(worker_raw_rx_overflow[2]),
     .s_axis_3_tdata(worker_raw_rx_tdata[3*AXIS_ETH_DATA_WIDTH +: AXIS_ETH_DATA_WIDTH]),
     .s_axis_3_tkeep(worker_raw_rx_tkeep[3*AXIS_ETH_KEEP_WIDTH +: AXIS_ETH_KEEP_WIDTH]),
     .s_axis_3_tvalid(worker_raw_rx_tvalid[3 +: 1]),
     .s_axis_3_tready(worker_raw_rx_tready[3 +: 1]),
     .s_axis_3_tlast(worker_raw_rx_tlast[3 +: 1]),
     .s_axis_3_tuser(worker_raw_rx_tuser[3*SWITCH_AXIS_USER_WIDTH +: SWITCH_AXIS_USER_WIDTH]),
+    .s_axis_3_overflow(worker_raw_rx_overflow[3]),
     .m_axis_tdata(pair_rx_tdata),
     .m_axis_tkeep(pair_rx_tkeep),
     .m_axis_tvalid(pair_rx_tvalid),
@@ -1300,6 +1313,32 @@ pair_result_broadcast_inst (
     .m_axis_tdest(switch_tx_tdest),
     .m_axis_tuser(switch_tx_tuser)
 );
+
+always @(posedge clk_300mhz) begin
+    if (rst_300mhz) begin
+        agg_tx_packet_count_0 <= 0; agg_tx_packet_count_1 <= 0;
+        agg_tx_packet_count_2 <= 0; agg_tx_packet_count_3 <= 0;
+        agg_tx_byte_count_0 <= 0; agg_tx_byte_count_1 <= 0;
+        agg_tx_byte_count_2 <= 0; agg_tx_byte_count_3 <= 0;
+    end else begin
+        if (switch_tx_tvalid[0] && switch_tx_tready[0]) begin
+            agg_tx_byte_count_0 <= agg_tx_byte_count_0 + 8;
+            if (switch_tx_tlast[0]) agg_tx_packet_count_0 <= agg_tx_packet_count_0 + 1'b1;
+        end
+        if (switch_tx_tvalid[1] && switch_tx_tready[1]) begin
+            agg_tx_byte_count_1 <= agg_tx_byte_count_1 + 8;
+            if (switch_tx_tlast[1]) agg_tx_packet_count_1 <= agg_tx_packet_count_1 + 1'b1;
+        end
+        if (switch_tx_tvalid[2] && switch_tx_tready[2]) begin
+            agg_tx_byte_count_2 <= agg_tx_byte_count_2 + 8;
+            if (switch_tx_tlast[2]) agg_tx_packet_count_2 <= agg_tx_packet_count_2 + 1'b1;
+        end
+        if (switch_tx_tvalid[3] && switch_tx_tready[3]) begin
+            agg_tx_byte_count_3 <= agg_tx_byte_count_3 + 8;
+            if (switch_tx_tlast[3]) agg_tx_packet_count_3 <= agg_tx_packet_count_3 + 1'b1;
+        end
+    end
+end
 
 assign switch_rx_tdata[1*AXIS_ETH_DATA_WIDTH +: AXIS_ETH_DATA_WIDTH] = {AXIS_ETH_DATA_WIDTH{1'b0}};
 assign switch_rx_tkeep[1*AXIS_ETH_KEEP_WIDTH +: AXIS_ETH_KEEP_WIDTH] = {AXIS_ETH_KEEP_WIDTH{1'b0}};

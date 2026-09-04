@@ -9,7 +9,7 @@ FPGA_ARCH = zynquplus
 # Files for synthesis
 SYN_FILES = rtl/fpga.v
 SYN_FILES += rtl/fpga_core.v
-SYN_FILES += rtl/axis_udp_pair_aggregator.v
+SYN_FILES += rtl/axis_udp_batch_aggregator.v
 SYN_FILES += rtl/axis_ip_route_classifier.v
 SYN_FILES += rtl/debounce_switch.v
 SYN_FILES += rtl/common/mqnic_core_axi.v
