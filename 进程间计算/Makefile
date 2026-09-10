@@ -1,23 +1,21 @@
-MPICC ?= /usr/local/openmpi/bin/mpicc
-CFLAGS ?= -O2 -Wall -Wextra -Werror -std=gnu11
-DPDK_FLAGS := $(shell pkg-config --cflags --libs libdpdk)
+CC = cc
+MPICC ?= mpicc
+CFLAGS ?= -O3 -march=native -std=c11 -Wall -Wextra -Werror
+DPDK_CFLAGS := $(shell pkg-config --cflags libdpdk)
+DPDK_LIBS := $(shell pkg-config --libs libdpdk)
 
-.PHONY: all dpdk clean test
+all: mpi_fpga_bridge benchmark_bridge_native benchmark_dpdk
 
-all: mpi_fpga_bridge
+mpi_fpga_bridge: mpi_fpga_bridge.c dpdk_port.c dpdk_port.h bridge_protocol.h
+	$(MPICC) $(DPDK_CFLAGS) $(CFLAGS) mpi_fpga_bridge.c dpdk_port.c -o $@ $(DPDK_LIBS)
 
-mpi_fpga_bridge: mpi_fpga_bridge.c
-	$(MPICC) $(CFLAGS) -o $@ $<
+benchmark_bridge_native: benchmark_bridge_native.c bridge_protocol.h
+	$(CC) $(CFLAGS) $< -o $@
 
-dpdk: mpi_fpga_bridge.c
-	$(MPICC) $(CFLAGS) -DUSE_DPDK -o mpi_fpga_bridge_dpdk $< $(DPDK_FLAGS)
+benchmark_dpdk: benchmark_dpdk.c dpdk_port.c dpdk_port.h bridge_protocol.h
+	$(MPICC) $(DPDK_CFLAGS) $(CFLAGS) benchmark_dpdk.c dpdk_port.c -o $@ $(DPDK_LIBS)
 
-clean:
-	rm -f mpi_fpga_bridge mpi_fpga_bridge_dpdk test_batch_protocol
+check:
+	python3 pre_synth_equivalence_check.py
 
-test_batch_protocol: test_batch_protocol.c mpi_fpga_bridge.c
-	$(MPICC) $(CFLAGS) -o $@ test_batch_protocol.c
-
-test: all dpdk test_batch_protocol
-	./test_batch_protocol
-	python3 -m py_compile bridge_app_client.py benchmark_bridge_bandwidth.py
+.PHONY: all check

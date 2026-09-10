@@ -1,0 +1,6 @@
+rank3: pinned CPU=3 transport=SIMULATION
+rank2: pinned CPU=2 transport=SIMULATION
+rank1: pinned CPU=1 transport=SIMULATION
+rank0: pinned CPU=0 transport=SIMULATION
+bridge v4: 127.0.0.1:48124, window=16 batches, 256 round slots, SIMULATION ONLY
+bridge completed=264622 failed=0 rejected=0

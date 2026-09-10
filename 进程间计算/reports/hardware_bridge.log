@@ -1,0 +1,17 @@
+EAL: No available 1048576 kB hugepages reported
+TELEMETRY: No legacy callbacks, legacy socket not created
+rank0: 0000:01:00.3, CPU 0, MTU 9000, link 10000 Mbit/s
+rank1: 0000:01:00.2, CPU 1, MTU 9000, link 10000 Mbit/s
+rank3: 0000:01:00.0, CPU 3, MTU 9000, link 10000 Mbit/s
+rank2: 0000:01:00.1, CPU 2, MTU 9000, link 10000 Mbit/s
+FPGA startup handshake passed on all four ports (attempt 2); excluded from benchmark
+rank0: pinned CPU=0 transport=DPDK
+rank2: pinned CPU=2 transport=DPDK
+rank1: pinned CPU=1 transport=DPDK
+rank3: pinned CPU=3 transport=DPDK
+bridge v4: 127.0.0.1:33558, window=16 batches, 256 round slots, FPGA
+bridge completed=1128727 failed=0 rejected=0
+DPDK tx=1128727 rx=1128727 short_bursts=0 rejected=0 missed=0 errors=0 no_mbuf=0
+DPDK tx=829254 rx=1128727 short_bursts=0 rejected=0 missed=0 errors=0 no_mbuf=0
+DPDK tx=550855 rx=1128727 short_bursts=0 rejected=0 missed=0 errors=0 no_mbuf=0
+DPDK tx=1128727 rx=1128727 short_bursts=0 rejected=0 missed=0 errors=0 no_mbuf=0

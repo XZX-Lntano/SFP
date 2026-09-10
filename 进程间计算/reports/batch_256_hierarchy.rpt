@@ -1,0 +1,33 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2025.2 (lin64) Build 6299465 Fri Nov 14 12:34:56 MST 2025
+| Date         : Mon Sep  7 20:06:08 2026
+| Host         : antl running 64-bit Ubuntu 22.04.5 LTS
+| Command      : report_utilization -hierarchical -file /home/antl/Desktop/SFP/进程间计算/reports/batch_256_hierarchy.rpt
+| Design       : axis_udp_batch_aggregator
+| Device       : xczu9eg-ffvb1156-2-e
+| Speed File   : -2
+| Design State : Optimized
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. Utilization by Hierarchy
+
+1. Utilization by Hierarchy
+---------------------------
+
++-------------------------------+-----------------------+------------+------------+---------+------+------+--------+--------+------+------------+
+|            Instance           |         Module        | Total LUTs | Logic LUTs | LUTRAMs | SRLs |  FFs | RAMB36 | RAMB18 | URAM | DSP Blocks |
++-------------------------------+-----------------------+------------+------------+---------+------+------+--------+--------+------+------------+
+| axis_udp_batch_aggregator     |                 (top) |       6759 |       6565 |     128 |   66 | 7940 |    112 |      4 |    0 |          8 |
+|   (axis_udp_batch_aggregator) |                 (top) |        295 |        197 |      32 |   66 |  583 |      0 |      0 |    0 |          0 |
+|   banks[0].bank               |   axis_udp_batch_bank |       5555 |       5531 |      24 |    0 | 6814 |     28 |      1 |    0 |          2 |
+|   banks[1].bank               | axis_udp_batch_bank_0 |        296 |        272 |      24 |    0 |  181 |     28 |      1 |    0 |          2 |
+|   banks[2].bank               | axis_udp_batch_bank_1 |        337 |        313 |      24 |    0 |  181 |     28 |      1 |    0 |          2 |
+|   banks[3].bank               | axis_udp_batch_bank_2 |        276 |        252 |      24 |    0 |  181 |     28 |      1 |    0 |          2 |
++-------------------------------+-----------------------+------------+------------+---------+------+------+--------+--------+------+------------+
+
+

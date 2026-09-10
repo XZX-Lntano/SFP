@@ -1,0 +1,46 @@
+Property                   Type     Read-only  Value
+ARCHITECTURE               string   true       zynquplus
+ARCHITECTURE_FULL_NAME     string   true       Zynq UltraScale+
+AVAILABLE_CONFIG_MODES     string*  true       
+AVAILABLE_IOBS             int      true       328
+BLOCK_RAMS                 int      true       912
+CLASS                      string   true       part
+COLS                       int      true       401
+COMPATIBLE_PARTS           string*  true       
+C_FAMILY                   string   true       zynquplus
+DEVICE                     string   true       xczu9eg
+DSP                        int      true       2520
+FAMILY                     string   true       zynquplus
+FE                         int      true       0
+FLIPFLOPS                  int      true       548160
+GB_TRANSCEIVERS            int      true       24
+GTHE4_TRANSCEIVERS         int      true       24
+IDCODE                     string   true       0x0484a093
+IO_PIN_COUNT               int      true       1156
+IO_STANDARDS               string   true       LVTTL LVCMOS33 LVCMOS25 LVCMOS18 LVCMOS15 LVCMOS12 HSUL_12 LVDCI_18 LVDCI_15 HSUL_12_DCI HSLVDCI_18 HSLVDCI_15 HSTL_I HSTL_I_DCI HSTL_I_18 HSTL_I_DCI_18 HSTL_I_12 HSTL_I_DCI_12 SSTL18_I SSTL18_II SSTL15 SSTL15_II SSTL135 SSTL135_II SSTL12 SSTL18_I_DCI SSTL15_DCI SSTL135_DCI SSTL12_DCI DIFF_HSTL_I DIFF_HSTL_I_18 DIFF_SSTL18_I DIFF_SSTL18_II DIFF_SSTL15 DIFF_SSTL15_II DIFF_SSTL135 DIFF_SSTL135_II DIFF_SSTL12 DIFF_HSUL_12 DIFF_HSTL_I_DCI DIFF_HSTL_I_DCI_18 DIFF_SSTL18_I_DCI DIFF_SSTL15_DCI DIFF_SSTL135_DCI DIFF_SSTL12_DCI DIFF_HSUL_12_DCI LVDS_25 LVDS ANALOG ANALOG_SE LVPECL SLVS_400_18 SLVS_400_25 SUB_LVDS DIFF_HSTL_I_12 DIFF_POD10 DIFF_POD12 DIFF_HSTL_I_DCI_12 DIFF_POD10_DCI DIFF_POD12_DCI POD10 POD12 POD10_DCI POD12_DCI MIPI_DPHY_DCI
+LUT_ELEMENTS               int      true       274080
+MAX_OPERATING_TEMPERATURE  int      true       100
+MAX_OPERATING_VOLTAGE      double   true       0.876
+MCBS                       int      true       0
+MIN_OPERATING_TEMPERATURE  int      true       0
+MIN_OPERATING_VOLTAGE      double   true       0.825
+MMCM                       int      true       4
+NAME                       string   true       xczu9eg-ffvb1156-2-e
+PACKAGE                    string   true       ffvb1156
+PACKAGE_PINOUT_VERSION     string   true       PRODUCTION 1.1 3/3/2017
+PACKAGE_PIN_DELAY_VERSION  string   true       PRODUCTION 1.0 7/24/2015
+PCI_BUSES                  int      true       0
+REF_OPERATING_TEMPERATURE  int      true       100
+REF_OPERATING_VOLTAGE      double   true       0.850
+REVISION                   string   true       
+ROWS                       int      true       435
+SLICES                     int      true       34260
+SLRS                       int      true       1
+SPEED                      string   true       -2
+SPEED_LABEL                string   true       PRODUCTION
+SPEED_LEVEL_ID             string   true       1.30
+SPEED_LEVEL_ID_DATE        string   true       05-15-2022
+SSN_REPORT                 bool     true       1
+SUPPORTS_NEXTGEN_VERSAL    bool     true       0
+TEMAC_NETWORK_CONTROLLERS  int      true       0
+TEMPERATURE_GRADE_LETTER   string   true       E
