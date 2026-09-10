@@ -1,0 +1,15 @@
+EAL: No available 1048576 kB hugepages reported
+TELEMETRY: No legacy callbacks, legacy socket not created
+rank1: 0000:01:00.2, CPU 1, MTU 9000, link 10000 Mbit/s
+rank0: 0000:01:00.3, CPU 0, MTU 9000, link 10000 Mbit/s
+rank2: 0000:01:00.1, CPU 2, MTU 9000, link 10000 Mbit/s
+rank3: 0000:01:00.0, CPU 3, MTU 9000, link 10000 Mbit/s
+FPGA startup handshake passed on all four ports (attempt 2); excluded from benchmark
+TX ONLY rank0: NIC packets=1000000 bytes=8368000000 elapsed=6.850854 wire estimate=9.800 Gbit/s; no aggregation/results
+TX ONLY rank3: NIC packets=1000000 bytes=8368000000 elapsed=6.850879 wire estimate=9.800 Gbit/s; no aggregation/results
+TX ONLY rank2: NIC packets=1000000 bytes=8368000000 elapsed=6.850929 wire estimate=9.800 Gbit/s; no aggregation/results
+TX ONLY rank1: NIC packets=1000000 bytes=8368000000 elapsed=6.850986 wire estimate=9.799 Gbit/s; no aggregation/results
+DPDK tx=1000000 rx=0 short_bursts=1151103 rejected=0 missed=0 errors=0 no_mbuf=0
+DPDK tx=1000000 rx=0 short_bursts=1108795 rejected=0 missed=0 errors=0 no_mbuf=0
+DPDK tx=1000000 rx=0 short_bursts=1110269 rejected=0 missed=0 errors=0 no_mbuf=0
+DPDK tx=1000000 rx=0 short_bursts=1148721 rejected=0 missed=0 errors=0 no_mbuf=0

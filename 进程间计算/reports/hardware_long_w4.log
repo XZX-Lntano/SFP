@@ -1,0 +1,14 @@
+EAL: No available 1048576 kB hugepages reported
+TELEMETRY: No legacy callbacks, legacy socket not created
+rank0: 0000:01:00.3, CPU 0, MTU 9000, link 10000 Mbit/s
+rank1: 0000:01:00.2, CPU 1, MTU 9000, link 10000 Mbit/s
+rank3: 0000:01:00.0, CPU 3, MTU 9000, link 10000 Mbit/s
+rank2: 0000:01:00.1, CPU 2, MTU 9000, link 10000 Mbit/s
+FPGA startup handshake passed on all four ports (attempt 2); excluded from benchmark
+DPDK direct FPGA: batches=1000000 rounds=16 workers=4 window=16 elapsed=9.780518 errors=0
+useful result 6.701 Gbit/s; per active input/output wire estimate 6.864 Gbit/s
+No application UDP or per-batch MPI transfer in this measurement; compare with end-to-end benchmark.
+DPDK tx=1000000 rx=1000000 short_bursts=0 rejected=0 missed=0 errors=0 no_mbuf=0
+DPDK tx=1000000 rx=1000000 short_bursts=0 rejected=0 missed=0 errors=0 no_mbuf=0
+DPDK tx=1000000 rx=1000000 short_bursts=0 rejected=0 missed=0 errors=0 no_mbuf=0
+DPDK tx=1000000 rx=1000000 short_bursts=0 rejected=0 missed=0 errors=0 no_mbuf=0
