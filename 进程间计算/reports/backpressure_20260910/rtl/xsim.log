@@ -1,0 +1,36 @@
+#-----------------------------------------------------------
+# xsim v2025.2 (64-bit)
+# SW Build 6299465 on Fri Nov 14 12:34:56 MST 2025
+# IP Build 6300035 on Fri Nov 14 10:48:45 MST 2025
+# SharedData Build 6298862 on Thu Nov 13 04:50:51 MST 2025
+# Start of session at: Thu Sep 10 21:40:17 2026
+# Process ID         : 427638
+# Current directory  : ~/Desktop/SFP/进程间计算/reports/backpressure_20260910/rtl
+# Command line       : xsim -mode tcl -source {xsim.dir/s512d65536/xsim_script.tcl}
+# Log file           : ~/Desktop/SFP/进程间计算/reports/backpressure_20260910/rtl/xsim.log
+# Journal file       : ~/Desktop/SFP/进程间计算/reports/backpressure_20260910/rtl/xsim.jou
+# Running On         : antl
+# Platform           : Ubuntu
+# Operating System   : Ubuntu 22.04.5 LTS
+# Processor Detail   : Intel(R) Core(TM) i7-10700 CPU @ 2.90GHz
+# CPU Frequency      : 4599.966 MHz
+# CPU Physical cores : 8
+# CPU Logical cores  : 16
+# Host memory        : 33476 MB
+# Swap memory        : 2147 MB
+# Total Virtual      : 35624 MB
+# Available Virtual  : 21006 MB
+#-----------------------------------------------------------
+source xsim.dir/s512d65536/xsim_script.tcl
+# xsim {s512d65536} -testplusarg PAUSE=0 -testplusarg SKEW=120 -autoloadwcfg -runall
+Time resolution is 1 ps
+run -all
+FIFO port=0 high_bytes=8424 frames=64 overflows=0 first_ns=127446.400 last_ns=557404.800
+FIFO port=1 high_bytes=8424 frames=64 overflows=0 first_ns=127446.400 last_ns=557404.800
+FIFO port=2 high_bytes=8424 frames=64 overflows=0 first_ns=127446.400 last_ns=557404.800
+FIFO port=3 high_bytes=8424 frames=64 overflows=0 first_ns=127446.400 last_ns=557404.800
+AGG slots=512 depth=65536 pause_us=0 skew_us=120 stalls=0 max_stall_cycles=0 max_occupied=19 drops=00000000000000000000000000000000 expired=0
+$finish called at time : 866878341 ps : File "~/Desktop/SFP/进程间计算/reports/backpressure_20260910/rtl/top.sv" Line 44
+exit
+INFO: xsimkernel Simulation Memory Usage: 287108 KB (Peak: 343672 KB), Simulation CPU Usage: 3860 ms
+INFO: [Common 17-206] Exiting xsim at Thu Sep 10 21:40:23 2026...

@@ -1,0 +1,23 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 1K of event 'cycles:u'
+# Event count (approx.): 27441684907
+#
+# Overhead  Command          Shared Object            Symbol                                   
+# ........  ...............  .......................  .........................................
+#
+    39.90%  mpi_fpga_bridge  libmpi.so.40.40.7        [.] mca_part_persist_progress
+    20.25%  mpi_fpga_bridge  libmpi.so.40.40.7        [.] ompi_request_default_test
+     9.45%  mpi_fpga_bridge  libopen-pal.so.80.0.5    [.] opal_progress
+     8.63%  mpi_fpga_bridge  libopen-pal.so.80.0.5    [.] mca_btl_sm_component_progress
+     6.44%  mpi_fpga_bridge  libmpi.so.40.40.7        [.] PMPI_Test
+     4.18%  mpi_fpga_bridge  libmpi.so.40.40.7        [.] ompi_coll_libnbc_progress
+     3.60%  mpi_fpga_bridge  libopen-pal.so.80.0.5    [.] opal_timer_linux_get_cycles_sys_timer
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#

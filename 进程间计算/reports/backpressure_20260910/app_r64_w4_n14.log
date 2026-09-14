@@ -1,0 +1,11 @@
+native v4: workers=4 rounds/frame=16 window=4 CPU=4
+elapsed=3.000052 s sent=112100 completed=112100 failed=0 timeout=0 late=0
+batches/s=37366.02 rounds/s=597856.32 mean RTT=106.673 us
+p99 RTT <= 224 us
+useful aggregate result   2448.819 Mbit/s (291.922 MiB/s)
+per active input payload  2488.876 Mbit/s (296.697 MiB/s)
+all input payload         9955.503 Mbit/s (1186.788 MiB/s)
+four output payload       9955.503 Mbit/s (1186.788 MiB/s)
+per output wire estimate  2508.605 Mbit/s (299.049 MiB/s)
+app UDP data both ways    12258.446 Mbit/s (1461.321 MiB/s)
+FPGA rates are inferred from successful replies, not physical-port counters.

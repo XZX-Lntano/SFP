@@ -1,8 +1,10 @@
+> 当前应用接口已升级为四端口v5，请以 [FOUR_PORT.md](FOUR_PORT.md) 为准。以下v4单端口、集中MPI、simulate描述和旧启动示例为历史记录。硬件仍为256 round槽/16batch。
+
 # ZCU102 aggregation v4
 
 This version replaces the single-round stop-and-wait datapath. The FPGA bitstream,
-bridge, client and benchmarks must all use v4. The old raw-socket source is retained
-as `mpi_fpga_bridge_v3_legacy.c` for reference; it is not part of the default build.
+bridge, client and benchmarks must all use v4. The old raw-socket implementation is
+not part of the default build.
 
 ## Hardware and capacity
 

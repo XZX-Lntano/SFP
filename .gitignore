@@ -50,3 +50,12 @@ corundum/utils/mqnic-xcvr
 corundum/utils/perout
 .agents/
 .codex/
+
+# Independent client binary and local scratch files
+进程间计算/benchmark_four_clients_native
+.recycle_bin*/
+.tmp*/
+client[0-3].log
+
+# Raw CPU profiling captures
+*.data

@@ -1,0 +1,22 @@
+
+****** xsim v2025.2 (64-bit)
+  **** SW Build 6299465 on Fri Nov 14 12:34:56 MST 2025
+  **** IP Build 6300035 on Fri Nov 14 10:48:45 MST 2025
+  **** SharedData Build 6298862 on Thu Nov 13 04:50:51 MST 2025
+  **** Start of session at: Thu Sep 10 21:31:47 2026
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source xsim.dir/s256d16384/xsim_script.tcl
+# xsim {s256d16384} -testplusarg PAUSE=120 -testplusarg SKEW=0 -autoloadwcfg -runall
+Time resolution is 1 ps
+run -all
+FIFO port=0 high_bytes=8408 frames=48 overflows=0 first_ns=7427.200 last_ns=443312.000
+FIFO port=1 high_bytes=8408 frames=48 overflows=0 first_ns=7427.200 last_ns=443312.000
+FIFO port=2 high_bytes=8408 frames=48 overflows=0 first_ns=7427.200 last_ns=443312.000
+FIFO port=3 high_bytes=16384 frames=48 overflows=0 first_ns=7427.200 last_ns=449718.400
+AGG slots=256 depth=16384 pause_us=120 skew_us=0 stalls=70585 max_stall_cycles=33878 max_occupied=16 drops=00000010000000100000001000000010 expired=0
+$finish called at time : 866878341 ps : File "~/Desktop/SFP/进程间计算/reports/backpressure_20260910/rtl/top.sv" Line 44
+exit
+INFO: xsimkernel Simulation Memory Usage: 285628 KB (Peak: 342192 KB), Simulation CPU Usage: 3410 ms
+INFO: [Common 17-206] Exiting xsim at Thu Sep 10 21:31:52 2026...

@@ -1,0 +1,132 @@
+[
+  {
+    "name": "direct_r64_w1_rep0",
+    "returncode": 0,
+    "seconds": 6.604990243911743
+  },
+  {
+    "name": "direct_r64_w2_rep0",
+    "returncode": 0,
+    "seconds": 6.674443483352661
+  },
+  {
+    "name": "direct_r64_w4_rep0",
+    "returncode": 0,
+    "seconds": 5.55778694152832
+  },
+  {
+    "name": "direct_r64_w8_rep0",
+    "returncode": 0,
+    "seconds": 5.205286502838135
+  },
+  {
+    "name": "direct_r64_w16_rep0",
+    "returncode": 0,
+    "seconds": 5.247831583023071
+  },
+  {
+    "name": "direct_r64_w16_rep1",
+    "returncode": 0,
+    "seconds": 5.1426637172698975
+  },
+  {
+    "name": "direct_r64_w8_rep1",
+    "returncode": 0,
+    "seconds": 5.129233360290527
+  },
+  {
+    "name": "direct_r64_w4_rep1",
+    "returncode": 0,
+    "seconds": 5.653378486633301
+  },
+  {
+    "name": "direct_r64_w2_rep1",
+    "returncode": 0,
+    "seconds": 6.7277991771698
+  },
+  {
+    "name": "direct_r64_w1_rep1",
+    "returncode": 0,
+    "seconds": 7.764070749282837
+  },
+  {
+    "name": "direct_r512_w8",
+    "returncode": 0,
+    "seconds": 5.3329479694366455
+  },
+  {
+    "name": "direct_r512_w16",
+    "returncode": 0,
+    "seconds": 5.252851247787476
+  },
+  {
+    "name": "app_r64_w1_n12",
+    "returncode": 0,
+    "seconds": 3.001603841781616
+  },
+  {
+    "name": "app_r64_w2_n13",
+    "returncode": 0,
+    "seconds": 3.0013558864593506
+  },
+  {
+    "name": "app_r64_w4_n14",
+    "returncode": 0,
+    "seconds": 3.0012269020080566
+  },
+  {
+    "name": "app_r64_w8_n15",
+    "returncode": 0,
+    "seconds": 3.0012760162353516
+  },
+  {
+    "name": "app_r64_w16_n16",
+    "returncode": 0,
+    "seconds": 3.0014469623565674
+  },
+  {
+    "name": "app_r64_w16_n17",
+    "returncode": 0,
+    "seconds": 3.001450300216675
+  },
+  {
+    "name": "app_r64_w8_n18",
+    "returncode": 0,
+    "seconds": 3.00127911567688
+  },
+  {
+    "name": "app_r512_w1_n19",
+    "returncode": 0,
+    "seconds": 3.0010757446289062
+  },
+  {
+    "name": "app_r512_w2_n20",
+    "returncode": 0,
+    "seconds": 3.0011484622955322
+  },
+  {
+    "name": "app_r512_w4_n21",
+    "returncode": 0,
+    "seconds": 3.0016160011291504
+  },
+  {
+    "name": "app_r512_w8_n22",
+    "returncode": 0,
+    "seconds": 3.0016212463378906
+  },
+  {
+    "name": "app_r512_w16_n23",
+    "returncode": 0,
+    "seconds": 3.0019185543060303
+  },
+  {
+    "name": "app_r512_w16_n24",
+    "returncode": 0,
+    "seconds": 3.0023391246795654
+  },
+  {
+    "name": "app_r512_w8_n25",
+    "returncode": 0,
+    "seconds": 3.0018653869628906
+  }
+]

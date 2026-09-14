@@ -9,253 +9,316 @@
 #include <time.h>
 #include <unistd.h>
 #include "dpdk_port.h"
+/* Separate bounded software records let a slow rank drain an old response even
+ * after another rank has completed that request at the client. */
+#define RECORDS (MAX_WINDOW*4)
 
 typedef struct {
-    uint32_t base, rounds, workers;
-    uint8_t values[MAX_ROUNDS*ENTRIES*8];
-} Work;
-typedef struct {
-    uint32_t status, base, rounds, workers;
-    uint8_t values[MAX_ROUNDS*ENTRIES*8];
-} Reply;
-typedef struct {
-    int busy, sent, complete, work_ready, early_valid;
+    int busy, sent, complete;
+    uint32_t base; 
+    unsigned rounds,workers;
     double started;
-    Work work[4];
-    Reply replies[4];
-    Reply early;
-    MPI_Request jobs[3], results[3], incoming, outgoing;
     struct sockaddr_in peer;
-} Slot;
-static Slot slots[MAX_WINDOW];
-static volatile sig_atomic_t stopping=0;
-static void stop_handler(int sig) {(void)sig;stopping=1;}
-static double now(void) {
-    struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return t.tv_sec+t.tv_nsec*1e-9;
+    struct rte_mbuf *tx;
+    uint8_t reply[WORKER_APP_MAX];
+} 
+Slot;
+
+static Slot slots[RECORDS];
+static Slot early[RECORDS];
+
+static volatile sig_atomic_t stopping;
+
+static void stop_handler(int sig){
+    (void)sig;
+    stopping=1;
 }
-static int cpu_number(void) {
-    cpu_set_t allowed;CPU_ZERO(&allowed);
-    if(sched_getaffinity(0,sizeof allowed,&allowed)<0) return -1;
-    for(int i=0;i<CPU_SETSIZE;i++) if(CPU_ISSET(i,&allowed)) {
-        cpu_set_t one;CPU_ZERO(&one);CPU_SET(i,&one);
-        if(sched_setaffinity(0,sizeof one,&one)<0) return -1;
-        return i;
-    }
-    return -1;
+
+static double now(void){
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC,&t);
+    return t.tv_sec+t.tv_nsec*1e-9;
 }
-static void post_work(Slot *s,int slot) {
-    MPI_Irecv(&s->work[0],sizeof(Work),MPI_BYTE,0,100+slot,MPI_COMM_WORLD,&s->incoming);
+
+static Slot *lookup(uint32_t base){
+    for(int i=0;i<RECORDS;i++)
+    if(slots[i].busy&&slots[i].base==base)
+    return &slots[i];
+    return NULL;
 }
-static void init_reply(Slot *s,int rank,unsigned status) {
-    Reply *r=&s->replies[rank];Work *w=&s->work[0];
-    r->base=w->base;r->rounds=w->rounds;r->workers=w->workers;r->status=status;
+
+static void finish(Slot *s,unsigned status,int rank){
+    app_header(s->reply,MSG_RESPONSE,s->base,s->rounds,s->workers,status);
+    put16(s->reply+4,WORKER_APP_VERSION);
+    put32(s->reply+20,rank);
+    if(status)memset(s->reply+APP_HEADER,0,s->rounds*512);
+    s->complete=1;
 }
-static void app_reply(int fd,const Slot *s,unsigned status) {
-    uint8_t b[APP_HEADER+MAX_ROUNDS*ENTRIES*8];const Work *w=&s->work[0];
-    size_t n=app_size(w->rounds,w->workers,1);
-    app_header(b,MSG_RESPONSE,w->base,w->rounds,w->workers,status);
-    if(status) memset(b+APP_HEADER,0,n-APP_HEADER);
-    else memcpy(b+APP_HEADER,s->replies[0].values,n-APP_HEADER);
-    if(sendto(fd,b,n,MSG_DONTWAIT,(const struct sockaddr *)&s->peer,sizeof(s->peer))!=(ssize_t)n)
-        fprintf(stderr,"application response dropped: %s\n",strerror(errno));
-}
-static int parse_mac(const char *str,uint8_t dst[6]) {
-    unsigned d[6];char extra;
-    if(sscanf(str,"%x:%x:%x:%x:%x:%x%c",d,d+1,d+2,d+3,d+4,d+5,&extra)!=6) return -1;
-    for(int i=0;i<6;i++) {if(d[i]>255) return -1;dst[i]=d[i];}return 0;
-}
-int main(int argc,char **argv) {
+
+int main(int argc,char **argv){
     MPI_Init(&argc,&argv);
-    int rank,size;MPI_Comm_rank(MPI_COMM_WORLD,&rank);MPI_Comm_size(MPI_COMM_WORLD,&size);
-    int simulate=0,probe=0,port=10000,window=MAX_WINDOW;double timeout=0.5;
-    uint8_t dst[6]={0xff,0xff,0xff,0xff,0xff,0xff};
+    int rank,size;
+    MPI_Comm_rank(MPI_COMM_WORLD,&rank);
+    MPI_Comm_size(MPI_COMM_WORLD,&size);
+    int port=10000,probe=0,window=MAX_WINDOW;
+    double timeout=.5;
     const char *bdfs[4]={"0000:01:00.3","0000:01:00.2","0000:01:00.1","0000:01:00.0"};
-    static struct option opts[]={{"simulate",0,0,'s'},{"probe",0,0,'P'},{"port",1,0,'p'},{"window",1,0,'w'},
-        {"timeout-ms",1,0,'t'},{"dst-mac",1,0,'m'},{"bdf0",1,0,1000},
-        {"bdf1",1,0,1001},{"bdf2",1,0,1002},{"bdf3",1,0,1003},{0,0,0,0}};
+    uint8_t dst[6]={255,255,255,255,255,255};
+
+    static struct option opts[]={
+        {"port",1,0,'p'},
+        {"window",1,0,'w'},
+        {"timeout-ms",1,0,'t'},
+        {"probe",0,0,'P'},
+        {"dst-mac",1,0,'m'},
+        {"bdf0",1,0,1000},
+        {"bdf1",1,0,1001},
+        {"bdf2",1,0,1002},
+        {"bdf3",1,0,1003},
+        {0,0,0,0}};
+
     int c;
-    while((c=getopt_long(argc,argv,"",opts,NULL))!=-1) {
-        if(c=='s') simulate=1;else if(c=='P') probe=1;else if(c=='p') port=atoi(optarg);
-        else if(c=='w') window=atoi(optarg);else if(c=='t') timeout=atof(optarg)/1000;
-        else if(c=='m') {if(parse_mac(optarg,dst)) MPI_Abort(MPI_COMM_WORLD,2);}
-        else if(c>=1000 && c<=1003) bdfs[c-1000]=optarg;else MPI_Abort(MPI_COMM_WORLD,2);
+    while((c=getopt_long(argc,argv,"",opts,NULL))!=-1){
+        if(c=='p')port=atoi(optarg);
+        else if(c=='w')window=atoi(optarg);
+        else if(c=='t')timeout=atof(optarg)/1000;
+        else if(c=='P')probe=1;
+        else if(c>=1000&&c<=1003)bdfs[c-1000]=optarg;
+        else if(c=='m'){
+            unsigned v[6];
+            char end;
+            if(sscanf(optarg,"%x:%x:%x:%x:%x:%x%c",v,v+1,v+2,v+3,v+4,v+5,&end)!=6)
+            MPI_Abort(MPI_COMM_WORLD,2);
+            for(int j=0;j<6;j++){
+                if(v[j]>255)
+                MPI_Abort(MPI_COMM_WORLD,2);
+                dst[j]=v[j];
+            }
+        }
+        else MPI_Abort(MPI_COMM_WORLD,2);
     }
-    if(size!=4 || port<1 || port>65535 || window<1 || window>MAX_WINDOW || timeout<0.2) {
-        if(!rank) fprintf(stderr,"Use mpirun -np 4 --bind-to core --map-by core ./mpi_fpga_bridge [--simulate] [--window 1..16] [--timeout-ms >=200]\n");
-        MPI_Abort(MPI_COMM_WORLD,2);
+
+    if(size!=4||port<1||port>65532||window<1||window>MAX_WINDOW||timeout<.2)
+    MPI_Abort(MPI_COMM_WORLD,2);
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    sched_getaffinity(0,sizeof set,&set);
+    int cpu=-1;
+
+    for(int j=0;j<CPU_SETSIZE;j++)
+    if(CPU_ISSET(j,&set)){
+        cpu=j;break;
     }
-    int cpu=cpu_number();if(cpu<0) MPI_Abort(MPI_COMM_WORLD,2);
+
+    if(cpu<0)
+    MPI_Abort(MPI_COMM_WORLD,2);
+    CPU_ZERO(&set);
+    CPU_SET(cpu,&set);
+
+    if(sched_setaffinity(0,sizeof set,&set))
+    MPI_Abort(MPI_COMM_WORLD,2);
     DpdkPort dp={0};
-    if(!simulate && dpdk_open(&dp,bdfs,rank,cpu,!probe)) MPI_Abort(MPI_COMM_WORLD,3);
-    fprintf(stderr,"rank%d: pinned CPU=%d transport=%s\n",rank,cpu,simulate?"SIMULATION":"DPDK");
-    if(probe) {if(!simulate) dpdk_close(&dp);MPI_Finalize();return 0;}
-    int fd=-1;
-    if(!rank) {
-        fd=socket(AF_INET,SOCK_DGRAM|SOCK_NONBLOCK,0);int buf=16*1024*1024;
-        setsockopt(fd,SOL_SOCKET,SO_RCVBUF,&buf,sizeof buf);setsockopt(fd,SOL_SOCKET,SO_SNDBUF,&buf,sizeof buf);
-        struct sockaddr_in a={.sin_family=AF_INET,.sin_port=htons(port),.sin_addr.s_addr=htonl(INADDR_LOOPBACK)};
-        if(fd<0 || bind(fd,(struct sockaddr *)&a,sizeof a)<0) {perror("app bind");MPI_Abort(MPI_COMM_WORLD,4);}
-        fprintf(stderr,"bridge v4: 127.0.0.1:%d, window=%d batches, 256 round slots, %s\n",port,window,simulate?"SIMULATION ONLY":"FPGA");
+
+    if(dpdk_open(&dp,bdfs,rank,cpu,!probe))
+    MPI_Abort(MPI_COMM_WORLD,3);
+
+    if(probe){
+        dpdk_close(&dp);
+        MPI_Finalize();
+        return 0;
     }
-    for(int i=0;i<MAX_WINDOW;i++) {
-        slots[i].incoming=slots[i].outgoing=MPI_REQUEST_NULL;
-        for(int j=0;j<3;j++) slots[i].jobs[j]=slots[i].results[j]=MPI_REQUEST_NULL;
-        if(rank) post_work(&slots[i],i);
+
+    int fd=socket(AF_INET,SOCK_DGRAM|SOCK_NONBLOCK,0),buf=16*1024*1024;
+    if(fd<0)
+    MPI_Abort(MPI_COMM_WORLD,4);
+    setsockopt(fd,SOL_SOCKET,SO_RCVBUF,&buf,sizeof buf);
+    setsockopt(fd,SOL_SOCKET,SO_SNDBUF,&buf,sizeof buf);
+
+    struct sockaddr_in addr={
+        .sin_family=AF_INET,
+        .sin_port=htons(port+rank),
+        .sin_addr.s_addr=htonl(INADDR_LOOPBACK)
+    };
+
+    if(bind(fd,(struct sockaddr *)&addr,sizeof addr)){
+        perror("bind");
+        MPI_Abort(MPI_COMM_WORLD,4);
     }
-    signal(SIGINT,stop_handler);signal(SIGTERM,stop_handler);
-    uint64_t completed=0,failed=0,rejected=0;int active=0;
-    uint8_t app_rx[MAX_WINDOW][MAX_APP+1],frame_app[APP_HEADER+4*MAX_ROUNDS*ENTRIES*8];
-    struct mmsghdr messages[MAX_WINDOW];struct iovec iov[MAX_WINDOW];
-    struct sockaddr_in peers[MAX_WINDOW];
-    memset(messages,0,sizeof messages);
-    for(int i=0;i<MAX_WINDOW;i++) {
-        iov[i]=(struct iovec){app_rx[i],sizeof app_rx[i]};
-        messages[i].msg_hdr.msg_iov=&iov[i];messages[i].msg_hdr.msg_iovlen=1;
-        messages[i].msg_hdr.msg_name=&peers[i];
+
+    signal(SIGINT,stop_handler);
+    signal(SIGTERM,stop_handler);
+    fprintf(stderr,"bridge v5 rank%d: 127.0.0.1:%d FPGA slots=%d window<=%d\n",rank,port+rank,MAX_WINDOW,window);
+
+    uint64_t completed=0,failed=0,rejected=0,late=0;
+    double stop_at=0;
+    int active=0;
+    uint8_t input[32][WORKER_APP_MAX+1];
+    struct sockaddr_in peers[32];
+    struct mmsghdr msgs[32]={0};
+    struct iovec io[32];
+
+    for(int j=0;j<32;j++){
+        io[j]=(struct iovec){
+            input[j],
+            sizeof input[j]
+        };
+        msgs[j].msg_hdr.msg_iov=&io[j];
+        msgs[j].msg_hdr.msg_iovlen=1;
+        msgs[j].msg_hdr.msg_name=&peers[j];
     }
-    while(!stopping || active) {
-        int received_messages=0;
-        if(!rank && !stopping) {
-            for(int i=0;i<MAX_WINDOW;i++) {
-                messages[i].msg_hdr.msg_namelen=sizeof peers[i];messages[i].msg_hdr.msg_flags=0;
-            }
-            received_messages=recvmmsg(fd,messages,MAX_WINDOW,MSG_DONTWAIT,NULL);
-            if(received_messages<0 && errno!=EAGAIN && errno!=EWOULDBLOCK && errno!=EINTR) stopping=1;
-        }
-        for(int burst=0;burst<received_messages;burst++) {
-            uint8_t *app=app_rx[burst];size_t n=messages[burst].msg_len;
-            struct sockaddr_in peer=peers[burst];
-            if(n==APP_HEADER && get32(app)==APP_MAGIC && get16(app+4)==4 && get16(app+6)==MSG_STOP) {
-                stopping=1;continue;
-            }
-            if(messages[burst].msg_hdr.msg_flags&MSG_TRUNC) {rejected++;continue;}
-            if(!app_valid(app,n,0)) {rejected++;continue;}
-            unsigned base=get32(app+8),rounds=get16(app+12),workers=get16(app+14);
-            int index=(base>>4)&(MAX_WINDOW-1);Slot *s=&slots[index];
-            if(s->busy || active>=window) {rejected++;continue;}
-            s->busy=1;s->sent=0;s->complete=0;s->work_ready=1;s->started=now();s->peer=peer;active++;
-            size_t bytes=rounds*ENTRIES*8;
-            for(int w=0;w<4;w++) {
-                s->work[w].base=base;s->work[w].rounds=rounds;s->work[w].workers=workers;
-                if((unsigned)w<workers) memcpy(s->work[w].values,app+APP_HEADER+w*bytes,bytes);
-                else memset(s->work[w].values,0,bytes);
-            }
-            if(simulate) for(unsigned i=0;i<rounds*ENTRIES;i++) {
-                uint64_t sum=0;for(unsigned w=0;w<workers;w++) sum+=get64(app+APP_HEADER+w*bytes+i*8);
-                for(int w=0;w<4;w++) put64(s->work[w].values+i*8,sum);
-            }
-            init_reply(s,0,0);
-            for(int w=1;w<4;w++) {
-                MPI_Isend(&s->work[w],offsetof(Work,values)+bytes,MPI_BYTE,w,100+index,MPI_COMM_WORLD,&s->jobs[w-1]);
-                MPI_Irecv(&s->replies[w],sizeof(Reply),MPI_BYTE,w,1000+index,MPI_COMM_WORLD,&s->results[w-1]);
-            }
-        }
-        if(rank) for(int i=0;i<MAX_WINDOW;i++) {
-            Slot *s=&slots[i];int done=0;
-            if(!s->busy) {
-                MPI_Test(&s->incoming,&done,MPI_STATUS_IGNORE);
-                if(done) {
-                    if(!s->work[0].rounds) {stopping=1;break;}
-                    s->busy=1;s->sent=0;s->complete=0;s->work_ready=1;s->started=now();active++;
-                    init_reply(s,rank,0);
-                    if(s->early_valid) {
-                        if(s->early.base==s->work[0].base && s->early.rounds==s->work[0].rounds &&
-                           s->early.workers==s->work[0].workers) {
-                            s->replies[rank]=s->early;s->complete=1;
-                        } else dp.rx_invalid++;
-                        s->early_valid=0;
+
+    while(!stopping||active){
+        if(stopping&&!stop_at)stop_at=now();
+        if(stop_at&&now()-stop_at>timeout*2)break;
+        /* Drain FPGA first so slow application work does not delay RX service. */
+        struct rte_mbuf *rx[32];
+        unsigned nr=rte_eth_rx_burst(dp.id,0,rx,32);
+        dp.rx_packets+=nr;
+
+        for(unsigned j=0;j<nr;j++){
+            uint8_t scratch[MAX_FRAME];
+            unsigned len=rte_pktmbuf_pkt_len(rx[j]),rounds,workers;
+            uint32_t base;
+            const uint8_t *b=len<=MAX_FRAME?rte_pktmbuf_read(rx[j],0,len,scratch):NULL;
+            if(b&&fpga_result_view(b,len,&base,&rounds,&workers)){
+                Slot *s=lookup(base);
+                if(s&&!s->complete&&s->rounds==rounds&&s->workers==workers){
+                    for(unsigned r=0;r<rounds;r++)
+                    memcpy(s->reply+APP_HEADER+r*512,b+FPGA_HEADER+r*ROUND_BYTES+8,512);
+                    finish(s,0,rank);
+                }
+                else {
+                    late++;
+                    if(!s && (unsigned)rank>=workers){
+                        Slot *e=&early[(base>>4)%RECORDS];
+                        *e=(Slot){
+                            .busy=1,
+                            .base=base,
+                            .rounds=rounds,
+                            .workers=workers,
+                            .started=now()
+                        };
+                        for(unsigned r=0;r<rounds;r++)
+                        memcpy(e->reply+APP_HEADER+r*512,b+FPGA_HEADER+r*ROUND_BYTES+8,512);
+                        finish(e,0,rank);
                     }
                 }
-            }
+            }else dp.rx_invalid++;
+            rte_pktmbuf_free(rx[j]);
         }
-        // Burst TX: only accepted mbufs transfer ownership to the PMD.
-        struct rte_mbuf *tx[MAX_WINDOW];int txslot[MAX_WINDOW],ntx=0;
-        for(int i=0;i<MAX_WINDOW;i++) {
-            Slot *s=&slots[i];if(!s->busy || !s->work_ready || s->sent || s->complete) continue;
-            Work *w=&s->work[0];
-            if(simulate) {
-                memcpy(s->replies[rank].values,w->values,w->rounds*ENTRIES*8);
-                s->sent=1;s->complete=1;continue;
-            }
-            if((unsigned)rank>=w->workers) {s->sent=1;continue;}
-            struct rte_mbuf *m=rte_pktmbuf_alloc(dp.pool);if(!m) break;
-            size_t len=FPGA_HEADER+w->rounds*ROUND_BYTES;
-            uint8_t *b=(uint8_t *)rte_pktmbuf_append(m,len);
-            if(!b) {rte_pktmbuf_free(m);break;}
-            app_header(frame_app,MSG_REQUEST,w->base,w->rounds,w->workers,0);
-            memcpy(frame_app+APP_HEADER,w->values,w->rounds*ENTRIES*8);
-            fpga_frame(b,frame_app,0,dst,0xc0a80a01u+rank,0xc0a80a65u+rank);put16(b+34,4000+rank);
-            tx[ntx]=m;txslot[ntx++]=i;
+        for(int j=0;j<32;j++){
+            msgs[j].msg_hdr.msg_namelen=sizeof peers[j];
+            msgs[j].msg_hdr.msg_flags=0;
         }
-        if(ntx) {
-            uint16_t sent=rte_eth_tx_burst(dp.id,0,tx,ntx);dp.tx_packets+=sent;
-            if(sent<ntx) dp.tx_short++;
-            for(int j=0;j<ntx;j++) {
-                if(j<sent) slots[txslot[j]].sent=1;else rte_pktmbuf_free(tx[j]);
-            }
+
+        int n=stopping?0:recvmmsg(fd,msgs,32,MSG_DONTWAIT,NULL);
+        if(n<0&&errno!=EAGAIN&&errno!=EWOULDBLOCK&&errno!=EINTR){
+            perror("recv");
+            MPI_Abort(MPI_COMM_WORLD,4);
         }
-        if(!simulate) {
-            struct rte_mbuf *rx[32];uint16_t n=rte_eth_rx_burst(dp.id,0,rx,32);dp.rx_packets+=n;
-            for(unsigned j=0;j<n;j++) {
-                uint8_t scratch[MAX_FRAME],values[MAX_ROUNDS*ENTRIES*8];
-                uint32_t base;unsigned rounds,workers;
-                const uint8_t *b=NULL;unsigned len=rte_pktmbuf_pkt_len(rx[j]);
-                if(len<=MAX_FRAME) b=rte_pktmbuf_read(rx[j],0,len,scratch);
-                if(b && fpga_result(b,len,values,&base,&rounds,&workers)) {
-                    Slot *s=&slots[(base>>4)&(MAX_WINDOW-1)];
-                    if(s->busy && !s->complete && s->work[0].base==base &&
-                        s->work[0].rounds==rounds && s->work[0].workers==workers) {
-                        memcpy(s->replies[rank].values,values,rounds*ENTRIES*8);s->complete=1;
-                    } else if(rank && !s->busy && !s->early_valid) {
-                        // Broadcast can beat MPI work notification on an inactive worker.
-                        s->early=(Reply){.status=0,.base=base,.rounds=rounds,.workers=workers};
-                        memcpy(s->early.values,values,rounds*ENTRIES*8);s->early_valid=1;
-                    } else dp.rx_invalid++;
-                } else dp.rx_invalid++;
-                rte_pktmbuf_free(rx[j]);
+
+        for(int j=0;j<n;j++){
+            uint8_t *b=input[j];
+            unsigned len=msgs[j].msg_len;
+            if(len==APP_HEADER&&get32(b)==APP_MAGIC&&get16(b+4)==WORKER_APP_VERSION&&get16(b+6)==MSG_STOP){
+                stopping=1;continue;
             }
-        }
-        for(int i=0;i<MAX_WINDOW;i++) {
-            Slot *s=&slots[i];if(!s->busy) continue;
-            if(!s->complete && now()-s->started>timeout) {
-                s->replies[rank].status=s->sent?STATUS_TIMEOUT:STATUS_SEND;s->complete=1;
+
+            if((msgs[j].msg_hdr.msg_flags&MSG_TRUNC)||!app_valid_worker(b,len)||get32(b+20)!=(unsigned)rank){
+                rejected++;continue;
             }
-            if(!s->complete) continue;
-            size_t bytes=s->work[0].rounds*ENTRIES*8;
-            if(rank) {
-                if(s->work_ready) {
-                    MPI_Isend(&s->replies[rank],offsetof(Reply,values)+bytes,MPI_BYTE,0,1000+i,MPI_COMM_WORLD,&s->outgoing);
-                    s->work_ready=0;
+
+            uint32_t base=get32(b+8);
+            if(lookup(base)){
+                rejected++;
+                continue;
+            }
+
+            Slot *s=NULL;
+            for(int k=0;k<RECORDS;k++)
+            if(!slots[k].busy){
+                s=&slots[k];
+                break;
+            }
+            if(!s){
+                rejected++;
+                continue;
+            }
+            *s=(Slot){
+                .busy=1,
+                .base=base,
+                .rounds=get16(b+12),
+                .workers=get16(b+14),
+                .started=now(),
+                .peer=peers[j]};
+                active++;
+
+            if((unsigned)rank<s->workers){
+                s->tx=rte_pktmbuf_alloc(dp.pool);
+                uint8_t *frame=s->tx?(uint8_t *)rte_pktmbuf_append(s->tx,FPGA_HEADER+s->rounds*ROUND_BYTES):NULL;
+                if(!frame){
+                    if(s->tx)rte_pktmbuf_free(s->tx);
+                    s->tx=NULL;
+                    finish(s,STATUS_SEND,rank);
                 }
-                int done;MPI_Test(&s->outgoing,&done,MPI_STATUS_IGNORE);
-                if(done) {s->busy=0;active--;post_work(s,i);}
-            } else {
-                int sent,received;
-                MPI_Testall(3,s->jobs,&sent,MPI_STATUSES_IGNORE);MPI_Testall(3,s->results,&received,MPI_STATUSES_IGNORE);
-                if(!sent || !received) continue;
-                unsigned status=s->replies[0].status;
-                for(int w=1;w<4;w++) {
-                    if(s->replies[w].status>status) status=s->replies[w].status;
-                    if(!status && (s->replies[w].base!=s->work[0].base ||
-                        s->replies[w].rounds!=s->work[0].rounds || s->replies[w].workers!=s->work[0].workers ||
-                        memcmp(s->replies[0].values,s->replies[w].values,bytes))) status=STATUS_MISMATCH;
+                else fpga_frame_work(frame,base,s->rounds,s->workers,b+APP_HEADER,rank,dst,0xc0a80a01u+rank,0xc0a80a65u+rank);
+            }else {
+                s->sent=1;
+                Slot *e=&early[(base>>4)%RECORDS];
+                if(e->busy&&e->base==base&&e->rounds==s->rounds&&e->workers==s->workers&&now()-e->started<timeout){
+                    memcpy(s->reply,e->reply,APP_HEADER+s->rounds*512);
+                    s->complete=1;
+                    e->busy=0;
                 }
-                if(status) fprintf(stderr,"batch %u failed: status=%u rank_status=%u,%u,%u,%u\n",
-                    s->work[0].base,status,s->replies[0].status,s->replies[1].status,
-                    s->replies[2].status,s->replies[3].status);
-                app_reply(fd,s,status);if(status) failed++;else completed++;
-                s->busy=0;active--;
             }
+        }
+        struct rte_mbuf *tx[RECORDS];
+        Slot *owners[RECORDS];
+        unsigned nt=0;
+
+        for(int j=0;j<RECORDS;j++)
+        if(slots[j].busy&&slots[j].tx&&!slots[j].complete){
+            owners[nt]=&slots[j];
+            tx[nt++]=slots[j].tx;
+        }
+
+        if(nt){
+            unsigned sent=rte_eth_tx_burst(dp.id,0,tx,nt);
+            dp.tx_packets+=sent;if(sent<nt)dp.tx_short++;
+            for(unsigned j=0;j<sent;j++){
+                owners[j]->tx=NULL;
+                owners[j]->sent=1;
+            }
+        }
+
+        for(int j=0;j<RECORDS;j++){
+            Slot *s=&slots[j];if(!s->busy)continue;
+            if(!s->complete&&now()-s->started>timeout)
+            finish(s,STATUS_TIMEOUT,rank);
+            if(!s->complete)
+            continue;
+            size_t len=APP_HEADER+s->rounds*512;
+            ssize_t sent=sendto(fd,s->reply,len,MSG_DONTWAIT,(struct sockaddr *)&s->peer,sizeof s->peer);
+            if(sent<0&&(errno==EAGAIN||errno==EWOULDBLOCK||errno==EINTR)&&now()-s->started<timeout)
+            continue;
+            if(sent==(ssize_t)len&&!get16(s->reply+18))
+            completed++;
+        else failed++;
+            if(s->tx){
+                rte_pktmbuf_free(s->tx);
+                s->tx=NULL;
+            }
+            s->busy=0;
+            active--;
         }
     }
-    if(!rank) {
-        Work stop={0};MPI_Request req[3];
-        for(int w=1;w<4;w++) MPI_Isend(&stop,offsetof(Work,values),MPI_BYTE,w,100,MPI_COMM_WORLD,&req[w-1]);
-        MPI_Waitall(3,req,MPI_STATUSES_IGNORE);
-        fprintf(stderr,"bridge completed=%lu failed=%lu rejected=%lu\n",completed,failed,rejected);close(fd);
-    } else for(int i=0;i<MAX_WINDOW;i++) if(slots[i].incoming!=MPI_REQUEST_NULL) {
-        MPI_Cancel(&slots[i].incoming);MPI_Wait(&slots[i].incoming,MPI_STATUS_IGNORE);
-    }
-    if(!simulate) dpdk_close(&dp);
-    MPI_Finalize();return 0;
+
+    for(int j=0;j<RECORDS;j++)
+    if(slots[j].tx)
+    rte_pktmbuf_free(slots[j].tx);
+    fprintf(stderr,"rank%d completed=%lu failed=%lu rejected=%lu late=%lu\n",rank,completed,failed,rejected,late);
+    close(fd);
+    dpdk_close(&dp);
+    MPI_Finalize();
+    return failed?1:0;
 }

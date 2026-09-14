@@ -1,0 +1,2 @@
+[ perf record: Woken up 1 times to write data ]
+[ perf record: Captured and wrote 0.082 MB ~/Desktop/SFP/进程间计算/reports/cpu_limits_20260909_211135/loaded_r0.data (1200 samples) ]

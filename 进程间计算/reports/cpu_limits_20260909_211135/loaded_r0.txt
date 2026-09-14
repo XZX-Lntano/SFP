@@ -1,0 +1,23 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 1K of event 'cycles:u'
+# Event count (approx.): 13287007848
+#
+# Overhead  Command          Shared Object                Symbol                                            
+# ........  ...............  ...........................  ..................................................
+#
+    51.38%  mpi_fpga_bridge  libc.so.6                    [.] __memmove_avx_unaligned_erms
+     8.84%  mpi_fpga_bridge  libc.so.6                    [.] __memcmp_avx2_movbe
+     7.34%  mpi_fpga_bridge  [unknown]                    [.] 0x000063afa62533fd
+     2.39%  mpi_fpga_bridge  [unknown]                    [.] 0x000063afa6252797
+     2.33%  mpi_fpga_bridge  libopen-pal.so.80.0.5        [.] mca_btl_sm_poll_handle_frag
+     1.42%  mpi_fpga_bridge  libmpi.so.40.40.7            [.] mca_pml_ob1_send_request_start_rdma
+     1.17%  mpi_fpga_bridge  [unknown]                    [.] 0x000063afa62537da
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#

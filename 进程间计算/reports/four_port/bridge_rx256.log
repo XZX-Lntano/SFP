@@ -1,0 +1,8 @@
+rank0 completed=631381 failed=0 rejected=0 late=0
+rank1 completed=631381 failed=0 rejected=0 late=0
+rank2 completed=631381 failed=0 rejected=0 late=0
+rank3 completed=631381 failed=0 rejected=0 late=0
+DPDK tx=631381 rx=631381 short_bursts=0 rejected=0 missed=0 errors=0 no_mbuf=0
+DPDK tx=631381 rx=631381 short_bursts=0 rejected=0 missed=0 errors=0 no_mbuf=0
+DPDK tx=631375 rx=631381 short_bursts=0 rejected=0 missed=0 errors=0 no_mbuf=0
+DPDK tx=631378 rx=631381 short_bursts=0 rejected=0 missed=0 errors=0 no_mbuf=0

@@ -1,0 +1,36 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 1K of event 'cycles:u'
+# Event count (approx.): 4728004008
+#
+# Overhead  Command          Shared Object            Symbol                                
+# ........  ...............  .......................  ......................................
+#
+    19.46%  mpi_fpga_bridge  libc.so.6                [.] __recvmmsg
+     9.47%  mpi_fpga_bridge  [unknown]                [k] 0xffffffffb9200080
+     7.65%  mpi_fpga_bridge  [unknown]                [.] 0x000063afa6251710
+     6.23%  mpi_fpga_bridge  [unknown]                [.] 0x000063afa62516c0
+     4.24%  mpi_fpga_bridge  [unknown]                [.] 0x000063afa62517ca
+     2.64%  mpi_fpga_bridge  [unknown]                [.] 0x000063afa62517af
+     2.13%  mpi_fpga_bridge  libc.so.6                [.] __GI___pthread_disable_asynccancel
+     1.98%  mpi_fpga_bridge  [unknown]                [.] 0x000063afa62517c3
+     1.85%  mpi_fpga_bridge  [unknown]                [.] 0x000063afa62516c4
+     1.76%  mpi_fpga_bridge  [unknown]                [.] 0x000063afa62517b9
+     1.66%  mpi_fpga_bridge  libc.so.6                [.] __GI___pthread_enable_asynccancel
+     1.65%  mpi_fpga_bridge  [unknown]                [.] 0x000063afa6252715
+     1.59%  mpi_fpga_bridge  librte_net_i40e.so.22.0  [.] 0x000000000004a4d7
+     1.51%  mpi_fpga_bridge  [unknown]                [.] 0x000063afa6252c1a
+     1.50%  mpi_fpga_bridge  [unknown]                [.] 0x000063afa6252726
+     1.48%  mpi_fpga_bridge  [unknown]                [.] 0x000063afa62517b2
+     1.44%  mpi_fpga_bridge  librte_net_i40e.so.22.0  [.] 0x000000000004a4de
+     1.27%  mpi_fpga_bridge  [unknown]                [.] 0x000063afa6252290
+     1.17%  mpi_fpga_bridge  [unknown]                [.] 0x000063afa625270b
+     1.16%  mpi_fpga_bridge  [unknown]                [.] 0x000063afa62516b7
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#

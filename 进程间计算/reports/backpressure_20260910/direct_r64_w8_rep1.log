@@ -1,0 +1,18 @@
+EAL: No available 1048576 kB hugepages reported
+TELEMETRY: No legacy callbacks, legacy socket not created
+rank1: 0000:01:00.2, CPU 1, MTU 9000, link 10000 Mbit/s
+rank0: 0000:01:00.3, CPU 0, MTU 9000, link 10000 Mbit/s
+rank2: 0000:01:00.1, CPU 2, MTU 9000, link 10000 Mbit/s
+rank3: 0000:01:00.0, CPU 3, MTU 9000, link 10000 Mbit/s
+FPGA startup handshake passed on all four ports (attempt 2); excluded from benchmark
+DIAG rank=3 rtt_mean_us=87.742 rtt_max_us=367.676 poll_gap_max_us=111.100 rx_burst_max=8 empty_loops=3714617 loops=3762764 short=0
+DIAG rank=1 rtt_mean_us=87.737 rtt_max_us=331.123 poll_gap_max_us=254.225 rx_burst_max=8 empty_loops=3379246 loops=3425977 short=0
+DIAG rank=0 rtt_mean_us=87.739 rtt_max_us=364.631 poll_gap_max_us=148.168 rx_burst_max=8 empty_loops=3571774 loops=3619180 short=0
+DIAG rank=2 rtt_mean_us=87.740 rtt_max_us=348.126 poll_gap_max_us=102.247 rx_burst_max=5 empty_loops=3584644 loops=3632631 short=0
+DPDK direct FPGA: batches=100000 rounds=16 workers=4 window=8 elapsed=1.106327 errors=0
+useful result 5.924 Gbit/s; per active input/output wire estimate 6.068 Gbit/s
+No application UDP or per-batch MPI transfer in this measurement; compare with end-to-end benchmark.
+DPDK tx=100000 rx=100000 short_bursts=0 rejected=0 missed=0 errors=0 no_mbuf=0
+DPDK tx=100000 rx=100000 short_bursts=0 rejected=0 missed=0 errors=0 no_mbuf=0
+DPDK tx=100000 rx=100000 short_bursts=0 rejected=0 missed=0 errors=0 no_mbuf=0
+DPDK tx=100000 rx=100000 short_bursts=0 rejected=0 missed=0 errors=0 no_mbuf=0

@@ -19,6 +19,8 @@
 #define ROUND_BYTES 520
 #define MAX_FRAME (FPGA_HEADER + MAX_ROUNDS * ROUND_BYTES)
 #define MAX_APP (APP_HEADER + 4 * MAX_ROUNDS * ENTRIES * 8)
+#define WORKER_APP_MAX (APP_HEADER + MAX_ROUNDS * ENTRIES * 8)
+#define WORKER_APP_VERSION 5
 #define MSG_REQUEST 1
 #define MSG_RESPONSE 2
 #define MSG_STOP 3
@@ -51,6 +53,20 @@ static inline size_t app_size(unsigned rounds, unsigned workers, int response) {
 }
 /* App header: magic:u32, version/type:u16, base_round:u32,
  * rounds/workers/entries/status:u16, reserved:u32. Worker-major values follow. */
+/* Application v5 carries one worker; offset20 identifies worker/rank. FPGA stays v4. */
+static inline int app_valid_worker(const uint8_t *b, size_t n) {
+    if (n<APP_HEADER || get32(b)!=APP_MAGIC || get16(b+4)!=WORKER_APP_VERSION ||
+        get16(b+6)!=MSG_REQUEST || (get32(b+8)&15) || !get16(b+12) ||
+        get16(b+12)>MAX_ROUNDS || get16(b+14)<2 || get16(b+14)>4 ||
+        get16(b+16)!=ENTRIES || get16(b+18) || get32(b+20)>3) return 0;
+    return n==APP_HEADER+(get32(b+20)<get16(b+14)?(size_t)get16(b+12)*ENTRIES*8:0);
+}
+static inline int app_worker_response(const uint8_t *b,size_t n) {
+    return n>=APP_HEADER && get32(b)==APP_MAGIC && get16(b+4)==WORKER_APP_VERSION &&
+        get16(b+6)==MSG_RESPONSE && !(get32(b+8)&15) && get16(b+12)>=1 &&
+        get16(b+12)<=MAX_ROUNDS && get16(b+14)>=2 && get16(b+14)<=4 &&
+        get16(b+16)==ENTRIES && get32(b+20)<4 && n==APP_HEADER+(size_t)get16(b+12)*512;
+}
 static inline int app_valid(const uint8_t *b, size_t n, int response) {
     if (n < APP_HEADER || get32(b) != APP_MAGIC || get16(b+4) != 4 ||
         get16(b+6) != (response ? MSG_RESPONSE : MSG_REQUEST) ||
@@ -90,6 +106,10 @@ static inline size_t fpga_frame(uint8_t *b, const uint8_t *app, unsigned worker,
         memcpy(p+8, values+r*ENTRIES*8, ENTRIES*8);
     }
     return len;
+}
+static inline size_t fpga_frame_work(uint8_t *b, uint32_t base, unsigned rounds, unsigned workers, const uint8_t *values, unsigned worker, const uint8_t dst[6], uint32_t src, uint32_t dest) {
+    size_t len=FPGA_HEADER+rounds*ROUND_BYTES; memset(b,0,FPGA_HEADER); memcpy(b,dst,6); b[6]=2;b[11]=1;put16(b+12,0x0800);b[14]=0x45;put16(b+16,len-14);put16(b+20,0x4000);b[22]=64;b[23]=17;put32(b+26,src);put32(b+30,dest);put16(b+24,ip_checksum(b+14));put16(b+34,4000+worker);put16(b+36,FPGA_DPORT);put16(b+38,len-34);put16(b+42,FPGA_MAGIC);b[44]=4;b[45]=workers;b[46]=rounds;b[47]=MSG_REQUEST;
+    for(unsigned r=0;r<rounds;r++){uint8_t *q=b+FPGA_HEADER+r*ROUND_BYTES;put32(q,base+r);put32(q+4,0);memcpy(q+8,values+r*ENTRIES*8,ENTRIES*8);} return len;
 }
 static inline int fpga_result_view(const uint8_t *b, size_t n,
                                uint32_t *base, unsigned *rounds, unsigned *workers) {

@@ -60,10 +60,11 @@ static int configure_port(uint16_t id,int rank) {
     struct rte_eth_conf conf={0};conf.rxmode.mtu=JUMBO_MTU;
     if(rte_eth_dev_configure(id,1,1,&conf)<0 || rte_eth_dev_set_mtu(id,JUMBO_MTU)<0) return -1;
     int socket=rte_eth_dev_socket_id(id);if(socket<0) socket=0;
-    pools[rank]=rte_pktmbuf_pool_create(pool_name,511,32,0,9728+RTE_PKTMBUF_HEADROOM,socket);
+    pools[rank]=rte_pktmbuf_pool_create(pool_name,2047,32,0,9728+RTE_PKTMBUF_HEADROOM,socket);
     if(!pools[rank]) {fprintf(stderr,"mbuf pool: %s\n",rte_strerror(rte_errno));return -1;}
-    // At most 16 result frames are in flight; keep the four jumbo rings cache resident.
-    uint16_t rx=64,tx=128;
+    // First-response clients can advance while another rank is still servicing UDP.
+    // Reserve RX headroom for independent progress and delayed broadcast copies.
+    uint16_t rx=256,tx=128;
     if(rte_eth_dev_adjust_nb_rx_tx_desc(id,&rx,&tx)<0 ||
         rte_eth_rx_queue_setup(id,0,rx,socket,&info.default_rxconf,pools[rank])<0 ||
         rte_eth_tx_queue_setup(id,0,tx,socket,&info.default_txconf)<0 ||

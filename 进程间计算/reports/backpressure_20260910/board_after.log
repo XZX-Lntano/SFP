@@ -1,0 +1,199 @@
+Control region size: 33554432
+Application region size: 33554432
+Device-level register blocks:
+ type 0xffffffff (v 0.0.1.0)
+ type 0x0000c007 (v 0.0.1.0)
+ type 0x0000c000 (v 0.0.1.0)
+ type 0x00000000 (v 0.0.0.0)
+ type 0x0000c006 (v 0.0.1.0)
+ type 0x0000c080 (v 0.0.2.0)
+ type 0x0000c081 (v 0.0.1.0)
+ type 0x0000c008 (v 0.0.1.0)
+ type 0x0000c101 (v 0.0.1.0)
+ type 0x0000c150 (v 0.0.1.0)
+FPGA ID: 0x04738093
+FPGA part: XCZU9
+FW ID: 0x00000000
+FW version: 0.0.1.0
+Board ID: 0x10ee9066
+Board version: 1.0.0.0
+Build date: 2026-09-07 12:09:45 UTC (raw 0x6a9ea989)
+Git hash: 00000000
+Release info: 00000000
+IF offset: 0x00000000
+IF count: 4
+IF stride: 0x00400000
+IF CSR offset: 0x00020000
+PHC ctrl: 0x00010100
+PHC time (ToD): 1789047628.397990189 s
+PHC time (rel): 390495715911 ns
+PHC period:     6.399999999 ns (raw 0x6 ns 0x66666666 fns)
+PHC nom period: 6.399999999 ns (raw 0x6 ns 0x66666666 fns)
+PHC perout ch 0 ctrl:   0x00010000
+PHC perout ch 0 start:  0.000000000 s
+PHC perout ch 0 period: 0.000000000 s
+PHC perout ch 0 width:  0.000000000 s
+Ref clock nominal period: 6.400000000 ns (raw 32/5 ns)
+Ref clock nominal freq: 156.250000 MHz
+Core clock nominal period: 3.333333333 ns (raw 10/3 ns)
+Core clock nominal freq: 300.000000 MHz
+Core clock freq: 299.966720 MHz
+CH0: clock freq: 156.248064 MHz
+CH1: clock freq: 124.901376 MHz
+CH2: clock freq: 156.248064 MHz
+CH3: clock freq: 124.956672 MHz
+CH4: clock freq: 156.250112 MHz
+CH5: clock freq: 132.509696 MHz
+CH6: clock freq: 156.250112 MHz
+CH7: clock freq: 132.202496 MHz
+Interface-level register blocks:
+ type 0x0000c001 (v 0.0.4.0)
+ type 0x0000c010 (v 0.0.4.0)
+ type 0x0000c020 (v 0.0.4.0)
+ type 0x0000c030 (v 0.0.4.0)
+ type 0x0000c031 (v 0.0.4.0)
+ type 0x0000c090 (v 0.0.2.0)
+ type 0x0000c002 (v 0.0.2.0)
+ type 0x0000c004 (v 0.0.3.0)
+IF features: 0x00001f11
+Port count: 1
+Scheduler block count: 1
+Max TX MTU: 9214 B
+Max RX MTU: 9214 B
+TX MTU: 9014 B
+RX MTU: 9014 B
+TX FIFO depth: 32768 B
+RX FIFO depth: 65536 B
+EQ offset: 0x00060000
+EQ count: 4
+EQ stride: 0x00000010
+CQ offset: 0x00080000
+CQ count: 64
+CQ stride: 0x00000010
+TXQ offset: 0x00100000
+TXQ count: 32
+TXQ stride: 0x00000020
+RXQ offset: 0x00180000
+RXQ count: 32
+RXQ stride: 0x00000020
+Port 0 RX queue map RSS mask: 0x0000001f
+Port 0 RX queue map app mask: 0x00000000
+Port 0 RX indirection table size: 32
+Port 0 RX indirection table:
+0000: 0000 0001 0002 0003 0000 0001 0002 0003
+0008: 0000 0001 0002 0003 0000 0001 0002 0003
+0010: 0000 0001 0002 0003 0000 0001 0002 0003
+0018: 0000 0001 0002 0003 0000 0001 0002 0003
+Port-level register blocks:
+ type 0x0000c003 (v 0.0.3.0)
+Port features: 0x00000003
+Port TX ctrl: 0x00010001
+Port RX ctrl: 0x00000001
+Port FC ctrl: 0x00000000
+Port LFC ctrl: 0x000047fc
+Port PFC ctrl 0: 0x00000000
+Port PFC ctrl 1: 0x00000000
+Port PFC ctrl 2: 0x00000000
+Port PFC ctrl 3: 0x00000000
+Port PFC ctrl 4: 0x00000000
+Port PFC ctrl 5: 0x00000000
+Port PFC ctrl 6: 0x00000000
+Port PFC ctrl 7: 0x00000000
+Scheduler block-level register blocks:
+ type 0x0000c040 (v 0.0.1.0)
+Sched count: 1
+Round-robin scheduler
+Sched channel count: 32
+Sched channel stride: 4
+Sched control: 1
+Sched dest: 0
+EQ info
+ Queue      Base Address     En A  LS  A   IRQ    Prod    Cons     Len
+EQ    0  0x00000000361e0000  1  0  10  1     0       0       0       0
+EQ    1  0x00000000361e8000  1  0  10  1     1       0       0       0
+EQ    2  0x00000000361f0000  1  0  10  1     2       0       0       0
+EQ    3  0x00000000361f8000  1  0  10  1     3       0       0       0
+CQ info
+ Queue      Base Address     En A  LS  A   EQN    Prod    Cons     Len
+CQ    0  0x00000000363c0000  1  0  10  1     0       0       0       0
+CQ    1  0x00000000363d0000  1  0  10  1     1       0       0       0
+CQ    2  0x00000000363d8000  1  0  10  1     2       0       0       0
+CQ    3  0x00000000363e8000  1  0  10  1     3       0       0       0
+CQ    4  0x00000000363f0000  1  0  10  1     0       0       0       0
+CQ    5  0x00000000363f8000  1  0  10  1     1       0       0       0
+CQ    6  0x0000000037280000  1  0  10  1     2       0       0       0
+CQ    7  0x0000000037288000  1  0  10  1     3       0       0       0
+CQ    8  0x00000000372b0000  1  0  10  1     0       0       0       0
+CQ    9  0x00000000372b8000  1  0  10  1     1       0       0       0
+CQ   10  0x00000000372e0000  1  0  10  1     2       0       0       0
+CQ   11  0x00000000372e8000  1  0  10  1     3       0       0       0
+CQ   12  0x0000000037310000  1  0  10  1     0       0       0       0
+CQ   13  0x0000000037318000  1  0  10  1     1       0       0       0
+CQ   14  0x0000000037340000  1  0  10  1     2       0       0       0
+CQ   15  0x0000000037348000  1  0  10  1     3       0       0       0
+CQ   16  0x0000000037370000  1  0  10  1     0       0       0       0
+CQ   17  0x0000000037378000  1  0  10  1     1       0       0       0
+CQ   18  0x00000000373a0000  1  0  10  1     2       0       0       0
+CQ   19  0x00000000373a8000  1  0  10  1     3       0       0       0
+CQ   20  0x00000000373d0000  1  0  10  1     0       0       0       0
+CQ   21  0x00000000373d8000  1  0  10  1     1       0       0       0
+CQ   22  0x0000000037400000  1  0  10  1     2       0       0       0
+CQ   23  0x0000000037408000  1  0  10  1     3       0       0       0
+CQ   24  0x0000000037430000  1  0  10  1     0       0       0       0
+CQ   25  0x0000000037438000  1  0  10  1     1       0       0       0
+CQ   26  0x0000000037460000  1  0  10  1     2       0       0       0
+CQ   27  0x0000000037468000  1  0  10  1     3       0       0       0
+CQ   28  0x0000000037490000  1  0  10  1     0       0       0       0
+CQ   29  0x0000000037498000  1  0  10  1     1       0       0       0
+CQ   30  0x00000000374c0000  1  0  10  1     2       0       0       0
+CQ   31  0x00000000374c8000  1  0  10  1     3       0       0       0
+CQ   32  0x00000000374f0000  1  0  10  1     0       0       0       0
+CQ   33  0x00000000374f8000  1  0  10  1     1       0       0       0
+CQ   34  0x0000000037520000  1  0  10  1     2       0       0       0
+CQ   35  0x0000000037528000  1  0  10  1     3       0       0       0
+TXQ info
+  Queue      Base Address     En A  B  LS   CQN    Prod    Cons     Len
+TXQ    0  0x0000000037260000  1  0  2  10     4       0       0       0
+TXQ    1  0x0000000037270000  1  0  2  10     5       0       0       0
+TXQ    2  0x0000000037290000  1  0  2  10     6      30       1      29
+TXQ    3  0x00000000372a0000  1  0  2  10     7       0       0       0
+TXQ    4  0x00000000372c0000  1  0  2  10     8       0       0       0
+TXQ    5  0x00000000372d0000  1  0  2  10     9       4       1       3
+TXQ    6  0x00000000372f0000  1  0  2  10    10       0       0       0
+TXQ    7  0x0000000037300000  1  0  2  10    11       0       0       0
+TXQ    8  0x0000000037320000  1  0  2  10    12       0       0       0
+TXQ    9  0x0000000037330000  1  0  2  10    13       0       0       0
+TXQ   10  0x0000000037350000  1  0  2  10    14       0       0       0
+TXQ   11  0x0000000037360000  1  0  2  10    15       0       0       0
+TXQ   12  0x0000000037380000  1  0  2  10    16       0       0       0
+TXQ   13  0x0000000037390000  1  0  2  10    17       0       0       0
+TXQ   14  0x00000000373b0000  1  0  2  10    18       0       0       0
+TXQ   15  0x00000000373c0000  1  0  2  10    19       0       0       0
+TXQ   16  0x00000000373e0000  1  0  2  10    20       0       0       0
+TXQ   17  0x00000000373f0000  1  0  2  10    21       0       0       0
+TXQ   18  0x0000000037410000  1  0  2  10    22      20       1      19
+TXQ   19  0x0000000037420000  1  0  2  10    23       0       0       0
+TXQ   20  0x0000000037440000  1  0  2  10    24       0       0       0
+TXQ   21  0x0000000037450000  1  0  2  10    25       0       0       0
+TXQ   22  0x0000000037470000  1  0  2  10    26       0       0       0
+TXQ   23  0x0000000037480000  1  0  2  10    27       6       1       5
+TXQ   24  0x00000000374a0000  1  0  2  10    28       0       0       0
+TXQ   25  0x00000000374b0000  1  0  2  10    29       8       2       6
+TXQ   26  0x00000000374d0000  1  0  2  10    30       0       0       0
+TXQ   27  0x00000000374e0000  1  0  2  10    31       0       0       0
+TXQ   28  0x0000000037500000  1  0  2  10    32       0       0       0
+TXQ   29  0x0000000037510000  1  0  2  10    33      26       2      24
+TXQ   30  0x0000000037530000  1  0  2  10    34       0       0       0
+TXQ   31  0x0000000037540000  1  0  2  10    35       0       0       0
+RXQ info
+  Queue      Base Address     En A  B  LS   CQN    Prod    Cons     Len
+RXQ    0  0x00000000363c8000  1  0  0  10     0    1024       0    1024
+RXQ    1  0x00000000363cc000  1  0  0  10     1    1024       0    1024
+RXQ    2  0x00000000363e0000  1  0  0  10     2    1024       0    1024
+RXQ    3  0x00000000363e4000  1  0  0  10     3    1024       0    1024
+Statistics counters
+Index 32: 64
+Index 33: 6720
+Index 34: 4480
+Index 36: 69
+Index 37: 4104
