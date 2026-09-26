@@ -1035,7 +1035,7 @@ generate
             )
             worker_rx_async_fifo_inst (
                 .s_clk(eth_rx_clk[n]),
-                .s_rst(eth_rx_rst[n]),
+                .s_rst(eth_rx_rst[n] | agg_rx_recovery[n]),
                 .s_axis_tdata(axis_eth_rx_tdata[n*AXIS_ETH_DATA_WIDTH +: AXIS_ETH_DATA_WIDTH]),
                 .s_axis_tkeep(axis_eth_rx_tkeep[n*AXIS_ETH_KEEP_WIDTH +: AXIS_ETH_KEEP_WIDTH]),
                 .s_axis_tvalid(axis_eth_rx_tvalid[n +: 1]),
@@ -1045,7 +1045,7 @@ generate
                 .s_axis_tdest(0),
                 .s_axis_tuser(axis_eth_rx_tuser[n*AXIS_ETH_RX_USER_WIDTH +: SWITCH_AXIS_USER_WIDTH]),
                 .m_clk(clk_300mhz),
-                .m_rst(rst_300mhz),
+                .m_rst(rst_300mhz | agg_recovery),
                 .m_axis_tdata(worker_raw_rx_tdata[n*AXIS_ETH_DATA_WIDTH +: AXIS_ETH_DATA_WIDTH]),
                 .m_axis_tkeep(worker_raw_rx_tkeep[n*AXIS_ETH_KEEP_WIDTH +: AXIS_ETH_KEEP_WIDTH]),
                 .m_axis_tvalid(worker_raw_rx_tvalid[n +: 1]),
@@ -1183,7 +1183,7 @@ generate
         )
         port_tx_async_fifo_inst (
             .s_clk(clk_300mhz),
-            .s_rst(rst_300mhz),
+            .s_rst(rst_300mhz | agg_recovery),
             .s_axis_tdata(switch_tx_tdata[n*AXIS_ETH_DATA_WIDTH +: AXIS_ETH_DATA_WIDTH]),
             .s_axis_tkeep(switch_tx_tkeep[n*AXIS_ETH_KEEP_WIDTH +: AXIS_ETH_KEEP_WIDTH]),
             .s_axis_tvalid(switch_tx_tvalid[n +: 1]),
@@ -1193,7 +1193,7 @@ generate
             .s_axis_tdest(0),
             .s_axis_tuser({AXIS_ETH_TX_USER_WIDTH{1'b0}}),
             .m_clk(eth_tx_clk[n]),
-            .m_rst(eth_tx_rst[n]),
+            .m_rst(eth_tx_rst[n] | agg_tx_recovery[n]),
             .m_axis_tdata(axis_eth_tx_tdata[n*AXIS_ETH_DATA_WIDTH +: AXIS_ETH_DATA_WIDTH]),
             .m_axis_tkeep(axis_eth_tx_tkeep[n*AXIS_ETH_KEEP_WIDTH +: AXIS_ETH_KEEP_WIDTH]),
             .m_axis_tvalid(axis_eth_tx_tvalid[n +: 1]),
@@ -1220,6 +1220,26 @@ generate
     end
 endgenerate
 
+/* Aggregator self-recovery: when the aggregator's watchdogs fire they pulse
+ * recovery_pulse (300 MHz domain). Bring that reset into every port clock
+ * domain with the library sync_reset module and reset BOTH sides of the
+ * per-port CDC FIFOs together (resetting only one side is what allowed a
+ * stopped/restarted port to wedge the aggregation path between host runs).
+ * sync_reset instances are recognised by lib/axis/syn/vivado/sync_reset.tcl,
+ * which false-paths their asynchronous reset inputs, so this crossing needs
+ * no hand-written CDC constraint. */
+wire agg_recovery;
+wire [PORT_COUNT-1:0] agg_rx_recovery, agg_tx_recovery;
+genvar rg;
+generate
+    for (rg=0; rg<PORT_COUNT; rg=rg+1) begin : agg_recovery_sync
+        sync_reset #(.N(2)) rx_rst_sync (
+            .clk(eth_rx_clk[rg]), .rst(agg_recovery), .out(agg_rx_recovery[rg]));
+        sync_reset #(.N(2)) tx_rst_sync (
+            .clk(eth_tx_clk[rg]), .rst(agg_recovery), .out(agg_tx_recovery[rg]));
+    end
+endgenerate
+
 axis_udp_batch_aggregator #(
     .SLOTS(256),
     .USER_WIDTH(SWITCH_AXIS_USER_WIDTH),
@@ -1241,6 +1261,7 @@ axis_udp_batch_aggregator_inst (
     .m_axis_tlast(pair_rx_tlast),
     .m_axis_tuser(pair_rx_tuser),
     .expired_batches(),
+    .recovery_pulse(agg_recovery),
     .dropped_frames()
 );
 assign pair_rx_tdest = {PORT_COUNT{1'b1}};

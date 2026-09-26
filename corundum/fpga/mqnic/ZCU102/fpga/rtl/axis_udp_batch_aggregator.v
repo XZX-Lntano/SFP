@@ -2,6 +2,17 @@
 // V4: Ethernet/IPv4/UDP, 6-byte AG header, 1..16 records of
 // {round_id:u32, reserved:u32, value[64]:u64}, all fields network endian.
 // Four independent streaming writers and BRAM banks feed a pipelined sum tree.
+// V5 adds self-recovery watchdogs: a stalled active transfer is aborted after
+// STALL_TIMEOUT_CYCLES; a gap with no COMPLETED ingress frame for
+// IDLE_TIMEOUT_CYCLES (tlast-based, so a wedged RX FIFO holding tvalid high
+// with a truncated frame is still detected); and frames completing with no
+// broadcast for NO_MATCH_TIMEOUT_CYCLES (one port's RX died). Each watchdog
+// pulses recovery_pulse so fpga_core can reset the per-port CDC FIFOs, and
+// flushes the banks - including the frame PARSER state (beat/good/accepting).
+// The parser was the real cross-run wedge: it is only cleared by s_last or
+// rst, so a truncated frame left `beat` parked at its maximum and that bank
+// then rejected every later frame forever, surviving every host-side restart
+// until the PL was reconfigured.
 `timescale 1ns / 1ps
 `default_nettype none
 
@@ -28,6 +39,7 @@ module axis_udp_batch_bank #(
     output wire [63:0] header_data,
     input wire read_enable,
     input wire [AW-1:0] read_address,
+    input wire flush,
     output reg [63:0] read_data,
     output reg [31:0] dropped = 0
 );
@@ -79,7 +91,15 @@ always @(posedge clk) begin
         record_index<=0; record_beat<=0;
     end else begin
         if (release_valid) valid_mem[release_slot]<=0;
-        if (s_valid) begin
+        /* Watchdog flush: drop every stored batch AND reset the frame parser.
+         * The parser is otherwise cleared only by s_last or rst, so a truncated
+         * frame (e.g. an RX FIFO reset mid-frame or a link glitch) leaves
+         * `beat` parked at its maximum and this bank then rejects every later
+         * frame forever - the real root cause of the cross-run wedge. */
+        if (flush) begin
+            valid_mem<=0; beat<=0; good<=0; accepting<=0;
+            record_index<=0; record_beat<=0;
+        end else if (s_valid) begin
             if (beat < 6) header_hold[beat] <= s_data;
             if (beat == 0) begin
                 good <= s_keep==8'hff && !s_user[0];
@@ -141,6 +161,17 @@ module axis_udp_batch_aggregator #(
     parameter USER_WIDTH=1,
     parameter UDP_PORT=16'h2345,
     parameter TIMEOUT_CYCLES=30000000,
+    /* Self-recovery watchdogs (300 MHz clock):
+     *   STALL_TIMEOUT_CYCLES : an active transfer that cannot advance for this
+     *     long is aborted, so a stalled output port can never wedge the engine.
+     *   IDLE_TIMEOUT_CYCLES  : no ingress frame for this long triggers a
+     *     recovery pulse that flushes the engine and (via recovery_pulse) the
+     *     port CDC FIFOs, so state left behind by one host run cannot poison
+     *     the next run. 1 s is far longer than any intra-run ingress gap. */
+    parameter STALL_TIMEOUT_CYCLES=300000,
+    parameter IDLE_TIMEOUT_CYCLES=300000000,
+    parameter NO_MATCH_TIMEOUT_CYCLES=600000000,
+    parameter RECOVERY_PULSE_CYCLES=64,
     parameter BATCHES=SLOTS/16,
     parameter BW=$clog2(BATCHES),
     parameter AW=$clog2(SLOTS*64)
@@ -159,6 +190,7 @@ module axis_udp_batch_aggregator #(
     output reg m_axis_tlast=0,
     output wire [USER_WIDTH-1:0] m_axis_tuser,
     output reg [31:0] expired_batches=0,
+    output reg recovery_pulse=0,
     output wire [127:0] dropped_frames
 );
 initial begin
@@ -189,13 +221,27 @@ wire [AW-1:0] read_address={active_slot,issue_round,issue_record_beat[5:0]-6'd1}
 assign s_axis_tready=4'hf;
 assign m_axis_tkeep=8'hff;
 assign m_axis_tuser=0;
+/* Input pipeline register. The port RX FIFOs are BRAM based; without this
+ * stage the path from their output registers to the bank header write-enables
+ * (a wide combinational cone over s_keep/s_user/s_last and the beat counters)
+ * dominated the 300 MHz timing. s_axis_tready is tied high, so this is a pure
+ * latency stage: the banks simply parse the stream one cycle later. */
+reg [255:0] in_tdata=0;
+reg [31:0]  in_tkeep=0;
+reg [3:0]   in_tvalid=0, in_tlast=0;
+reg [4*USER_WIDTH-1:0] in_tuser=0;
+always @(posedge clk) begin
+    in_tdata<=s_axis_tdata; in_tkeep<=s_axis_tkeep;
+    in_tvalid<=s_axis_tvalid; in_tlast<=s_axis_tlast; in_tuser<=s_axis_tuser;
+end
 genvar p;
 generate for (p=0;p<4;p=p+1) begin: banks
     axis_udp_batch_bank #(.SLOTS(SLOTS),.USER_WIDTH(USER_WIDTH),.UDP_PORT(UDP_PORT)) bank (
-        .clk(clk),.rst(rst),.s_data(s_axis_tdata[p*64+:64]),
-        .s_keep(s_axis_tkeep[p*8+:8]),.s_valid(s_axis_tvalid[p]),
-        .s_last(s_axis_tlast[p]),.s_user(s_axis_tuser[p*USER_WIDTH+:USER_WIDTH]),
+        .clk(clk),.rst(rst),.s_data(in_tdata[p*64+:64]),
+        .s_keep(in_tkeep[p*8+:8]),.s_valid(in_tvalid[p]),
+        .s_last(in_tlast[p]),.s_user(in_tuser[p*USER_WIDTH+:USER_WIDTH]),
         .release_valid(release_valid),.release_slot(release_slot),.inspect_slot(inspect),
+        .flush(flush_banks),
         .present(present[p]),.base_id(tags[p*32+:32]),.rounds(counts[p*5+:5]),
         .workers(workers[p*3+:3]),.header_index(issue_beat[2:0]),.header_data(headers[p*64+:64]),
         .read_enable(advance),.read_address(read_address),
@@ -213,6 +259,22 @@ end
 reg [31:0] ticks=0;
 reg [BATCHES-1:0] age_valid=0;
 reg [31:0] age[0:BATCHES-1];
+/* Self-recovery watchdog state.
+ * stall  : an active transfer cannot advance (output backpressure).
+ * idle   : no ingress FRAME has completed for IDLE_TIMEOUT. Keyed off frame
+ *          completion (tlast) rather than tvalid on purpose: a wedged RX FIFO
+ *          can hold tvalid high with a partial frame forever, and a
+ *          tvalid-based detector would then stay silent and never recover.
+ * noprog : frames are completing but no batch has been broadcast for
+ *          NO_MATCH_TIMEOUT (e.g. one port's RX died so the group can never
+ *          match); recovery resets every port FIFO and typically restores it. */
+wire frame_end = |(in_tvalid & in_tlast);
+wire bcast_end = m_axis_tvalid && m_axis_tready && m_axis_tlast;
+wire stall = active && !advance;
+reg [31:0] stall_ticks=0, idle_ticks=0, noprog_ticks=0;
+reg [31:0] stall_aborts=0, idle_resets=0, noprog_resets=0;
+reg [6:0] recovery_cnt=0;
+reg flush_banks=0;
 reg vr=0,v0=0,v1=0,v2=0, valr=0,val0=0,val1=0,val2=0, lastr=0,last0=0,last1=0,last2=0;
 reg [63:0] metar=0;
 reg [63:0] meta0=0,meta1=0,meta2=0, sum01=0,sum23=0,total=0;
@@ -233,8 +295,20 @@ always @(posedge clk) begin
         scan<=0; active<=0; issued_last<=0; release_valid<=0;
         ticks<=0; age_valid<=0; expired_batches<=0;
         vr<=0;v0<=0;v1<=0;v2<=0;m_axis_tvalid<=0;m_axis_tlast<=0;
+        stall_ticks<=0; idle_ticks<=0; noprog_ticks<=0; recovery_cnt<=0; flush_banks<=0;
+        stall_aborts<=0; idle_resets<=0; noprog_resets<=0; recovery_pulse<=0;
     end else begin
         ticks<=ticks+1'b1; release_valid<=0;
+        flush_banks<=0; recovery_pulse<=0;
+        // Watchdog counters. idle is keyed off frame COMPLETION (tlast), not
+        // tvalid: a wedged RX FIFO can hold tvalid high with a partial frame.
+        if (frame_end) idle_ticks<=0;
+        else if (idle_ticks<IDLE_TIMEOUT_CYCLES) idle_ticks<=idle_ticks+1'b1;
+        if (bcast_end) noprog_ticks<=0;
+        else if (noprog_ticks<NO_MATCH_TIMEOUT_CYCLES) noprog_ticks<=noprog_ticks+1'b1;
+        if (stall) begin
+            if (stall_ticks<STALL_TIMEOUT_CYCLES) stall_ticks<=stall_ticks+1'b1;
+        end else stall_ticks<=0;
         // Reclaim incomplete batches; this prevents one lost worker blocking a slot forever.
         if (!active && !release_valid) begin
             if (match) begin
@@ -277,6 +351,43 @@ always @(posedge clk) begin
         end
         if (m_axis_tvalid && m_axis_tready && m_axis_tlast) begin
             active<=0;release_valid<=1;release_slot<=active_slot;
+        end
+        /* ---- self-recovery, applied last so it overrides the normal state ----
+         * The original engine could stall forever: once `active` was set it had
+         * no timeout, so a stalled output port wedged it until the PL was
+         * reconfigured. Both watchdogs now start the SAME recovery pulse, which
+         * flushes the engine and every bank and (via recovery_pulse) resets the
+         * per-port CDC FIFOs in both clock domains:
+         *   - a stalled active transfer (dead/stuck output port), or
+         *   - a long gap with no ingress at all (state left by a finished run).
+         * Runs are seconds apart, so the idle case guarantees every host run
+         * starts from a clean engine. */
+        if (recovery_cnt!=0) begin
+            recovery_cnt<=recovery_cnt-1'b1; recovery_pulse<=1; flush_banks<=1;
+            active<=0; issued_last<=0; m_axis_tvalid<=0; m_axis_tlast<=0;
+            scan<=0; age_valid<=0;
+        end else if (idle_ticks>=IDLE_TIMEOUT_CYCLES) begin
+            /* No frame has COMPLETED for IDLE_TIMEOUT: either the link is idle
+             * (normal between runs) or an RX FIFO is wedged mid-frame with
+             * tvalid stuck high. Reset the engine, the bank slots and (via
+             * recovery_pulse) every port FIFO. */
+            recovery_cnt<=RECOVERY_PULSE_CYCLES; recovery_pulse<=1; flush_banks<=1;
+            active<=0; issued_last<=0; m_axis_tvalid<=0; m_axis_tlast<=0;
+            scan<=0; age_valid<=0; idle_ticks<=0;
+            idle_resets<=idle_resets+1'b1;
+        end else if (noprog_ticks>=NO_MATCH_TIMEOUT_CYCLES) begin
+            /* Frames are completing but nothing has been broadcast for
+             * NO_MATCH_TIMEOUT: most likely one port's RX has died, so the
+             * group can never match. Resetting the port FIFOs brings it back. */
+            recovery_cnt<=RECOVERY_PULSE_CYCLES; recovery_pulse<=1; flush_banks<=1;
+            active<=0; issued_last<=0; m_axis_tvalid<=0; m_axis_tlast<=0;
+            scan<=0; age_valid<=0; noprog_ticks<=0;
+            noprog_resets<=noprog_resets+1'b1;
+        end else if (stall && stall_ticks>=STALL_TIMEOUT_CYCLES) begin
+            recovery_cnt<=RECOVERY_PULSE_CYCLES; recovery_pulse<=1; flush_banks<=1;
+            active<=0; issued_last<=0; m_axis_tvalid<=0; m_axis_tlast<=0;
+            scan<=0; age_valid<=0; stall_ticks<=0;
+            stall_aborts<=stall_aborts+1'b1;
         end
     end
 end

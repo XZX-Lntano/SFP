@@ -1,9 +1,0 @@
-INFO: [VRFC 10-2263] Analyzing SystemVerilog file "~/Desktop/SFP/corundum/fpga/mqnic/ZCU102/fpga/rtl/axis_udp_batch_aggregator.v" into library work
-INFO: [VRFC 10-311] analyzing module axis_udp_batch_bank
-INFO: [VRFC 10-311] analyzing module axis_udp_batch_aggregator
-INFO: [VRFC 10-2263] Analyzing SystemVerilog file "~/Desktop/SFP/corundum/fpga/lib/eth/lib/axis/rtl/axis_broadcast.v" into library work
-INFO: [VRFC 10-311] analyzing module axis_broadcast
-INFO: [VRFC 10-2263] Analyzing SystemVerilog file "~/Desktop/SFP/corundum/fpga/lib/eth/lib/axis/rtl/axis_async_fifo.v" into library work
-INFO: [VRFC 10-311] analyzing module axis_async_fifo
-INFO: [VRFC 10-2263] Analyzing SystemVerilog file "~/Desktop/SFP/进程间计算/reports/backpressure_20260910/rtl/top.sv" into library work
-INFO: [VRFC 10-311] analyzing module fifo_tb

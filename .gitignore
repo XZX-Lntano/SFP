@@ -1,33 +1,44 @@
-# Locally built bridge executable
-进程间计算/mpi_fpga_bridge
+# ---------------------------------------------------------------------------
+# ZCU102 多机聚合项目 — 快照 .gitignore
+# 只提交源码；构建产物、运行/构建日志、站点私有信息一律不入库。
+# ---------------------------------------------------------------------------
 
-# Local agent and repository metadata
-进程间计算/.agents/
-进程间计算/.codex/
-进程间计算/.git/
+# 本地编译出的可执行文件
+多机/bench_random
 
-# Python bytecode
+# 站点私有参数（真实 IP / ssh 用户 / 密码）放这里，永不提交
+多机/local.conf
+
+# 本地 agent / VCS 元数据
+.agents/
+.codex/
+.git/
+
+# Python
 __pycache__/
 *.py[cod]
 
-# Generated host/FPGA artifacts; keep source and reports
-进程间计算/benchmark_bridge_native
-进程间计算/benchmark_dpdk
-进程间计算/reports/host_before_dpdk*.json
-进程间计算/reports/rtl_test/
-*.o
-*.a
-*.so
-*.ko
+# ---- 运行 / 构建日志（可能含绝对路径与主机名）----
+*.log
+*.jou
+*.pb
+*.wdb
+*.str
+*.zip
+*.tar.gz
+*.ltx
+*.dtbo
+
+# ---- Vivado / Xilinx 生成物与产物 ----
 *.dcp
 *.bit
 *.bin
 *.xsa
 *.xpr
-*.wdb
-*.pb
-*.jou
-*.str
+*.o
+*.a
+*.so
+*.ko
 .Xil/
 *.runs/
 *.gen/
@@ -38,24 +49,25 @@ __pycache__/
 *.ip_user_files/
 rev/
 xsim.dir/
-*.zip
-*.tar.gz
-*.ltx
-*.dtbo
+
+# 本项目中一次性使用的 Vivado 调试/重建脚本
+corundum/fpga/mqnic/ZCU102/fpga/fpga/rebuild*.tcl
+corundum/fpga/mqnic/ZCU102/fpga/fpga/check_cdc*.tcl
+corundum/fpga/mqnic/ZCU102/fpga/fpga/qcells.*
+corundum/fpga/mqnic/ZCU102/fpga/fpga/qexc.*
+corundum/fpga/mqnic/ZCU102/fpga/fpga/qfilt*.*
+
+# corundum 主机侧工具二进制
 corundum/utils/mqnic-config
 corundum/utils/mqnic-dump
 corundum/utils/mqnic-fw
 corundum/utils/mqnic-bmc
 corundum/utils/mqnic-xcvr
 corundum/utils/perout
-.agents/
-.codex/
 
-# Independent client binary and local scratch files
-进程间计算/benchmark_four_clients_native
 .recycle_bin*/
 .tmp*/
 client[0-3].log
 
-# Raw CPU profiling captures
+# CPU profiling 原始 capture
 *.data

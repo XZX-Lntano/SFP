@@ -166,3 +166,9 @@ set_property -dict {LOC AL3  IOSTANDARD DIFF_POD12_DCI } [get_ports {ddr4_dqs_t[
 set_property -dict {LOC AL2  IOSTANDARD DIFF_POD12_DCI } [get_ports {ddr4_dqs_c[1]}]    ;# U2.A7 DQSU_C
 set_property -dict {LOC AL6  IOSTANDARD POD12_DCI      } [get_ports {ddr4_dm_dbi_n[0]}] ;# U2.E7 DML_B/DBIL_B
 set_property -dict {LOC AN2  IOSTANDARD POD12_DCI      } [get_ports {ddr4_dm_dbi_n[1]}] ;# U2.E2 DMU_B/DBIU_B
+
+# NOTE: the aggregator self-recovery reset is brought into the port clock
+# domains with the library sync_reset module (see rtl/fpga_core.v). Its
+# asynchronous reset inputs are already false-pathed by
+# lib/axis/syn/vivado/sync_reset.tcl, so no hand-written CDC constraint is
+# needed here.
